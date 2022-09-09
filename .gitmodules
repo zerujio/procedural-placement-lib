@@ -1,0 +1,3 @@
+[submodule "lib/simple-renderer"]
+	path = lib/simple-renderer
+	url = git@github.com:zerujio/simple-renderer.git

@@ -1,0 +1,9 @@
+#ifndef PROCEDURALPLACEMENTLIB_GL_TYPES_HPP
+#define PROCEDURALPLACEMENTLIB_GL_TYPES_HPP
+
+namespace placement
+{
+    using GLuint = unsigned int;
+}
+
+#endif //PROCEDURALPLACEMENTLIB_GL_TYPES_HPP
