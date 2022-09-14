@@ -31,11 +31,12 @@ namespace placement {
      * Elements will be placed in the area specified by @p lower_bound and @p upperbound . The placement area is
      * defined by all points (x, y) such that
      *
-     *      lower_bound.x < x < upper_bound.x
-     *      lower_bound.y < y < upper_bound.y
+     *      lower_bound.x <= x < upper_bound.x
+     *      lower_bound.y <= y < upper_bound.y
      *
-     * If lower_bound is not less than upper_bound, the placement region will have zero area and no elements will be
-     * placed.
+     * i.e. the half open [lower_bound, upper_bound) range. Consequently, if lower_bound is not less than upper_bound,
+     * the placement region will have zero area and no elements will be placed. In that case no error will occur and an
+     * empty vector will be returned.
      *
      * @param world_data world height, density and scale.
      * @param footprint collision radius for the placed objects.

@@ -56,7 +56,7 @@ int main()
         glm::ivec2 texture_size;
         {
             int channels;
-            std::uint8_t *texture_data = stbi_load("heightmap.png", &texture_size.x, &texture_size.y, &channels, 0);
+            std::uint8_t *texture_data = stbi_load("assets/heightmap.png", &texture_size.x, &texture_size.y, &channels, 0);
             if (!texture_data)
             {
                 std::cerr << "texture load failed: " << stbi_failure_reason() << std::endl;
@@ -81,8 +81,9 @@ int main()
         world_data.scale.x = texture_size.x;
         world_data.scale.z = texture_size.y;
 
-        auto points = placement::computePlacement(world_data, 100.0f, {0.0f, 0.0f},
-                                                  {world_data.scale.x, world_data.scale.z});
+        const glm::vec2 lower_bound {glm::vec2(world_data.scale.x, world_data.scale.z) / 2.0f};
+        const glm::vec2 upper_bound {lower_bound + 100.0f};
+        auto points = placement::computePlacement(world_data, 5.0f, lower_bound, upper_bound);
 
         std::cout << std::endl << "placement results:\n";
         for (const auto &p: points)

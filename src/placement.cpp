@@ -106,27 +106,19 @@ void main()
 {
     const uint global_invocation_index = gl_GlobalInvocationID.y * gl_WorkGroupSize.x * gl_NumWorkGroups.x
                                         + gl_GlobalInvocationID.x;
-    const vec2 norm_position = (gl_GlobalInvocationID.xy + u_index_offset) * u_norm_footprint * 2;
- 
-    vec4 position = vec4(0.0f);
+    // calculate position
+    const vec2 tex_coord = (gl_GlobalInvocationID.xy + u_index_offset) * u_norm_footprint * 2.0f;
+    const float normalized_height = texture(u_height_map, tex_coord).x;
+    const vec3 position = vec3(tex_coord.x, normalized_height, tex_coord.y) * u_world_scale;
 
-    if (all(bvec4(greaterThan(norm_position, u_norm_lower_bound),
-                  lessThan(norm_position, u_norm_upper_bound))))
-    {
-        const float density_value = texture(u_density_map, norm_position).x;
-        const float threshold_value = dithering_matrix[gl_LocalInvocationID.x][gl_LocalInvocationID.y];
+    // determine validity
+    const float density_value = texture(u_density_map, tex_coord).x;
+    const float threshold_value = dithering_matrix[gl_LocalInvocationID.x][gl_LocalInvocationID.y];
+    const bool is_valid = all(greaterThanEqual(tex_coord, u_norm_lower_bound))
+                        && all(lessThan(tex_coord, u_norm_upper_bound))
+                        && density_value > threshold_value;
 
-        if (density_value > threshold_value)
-        {
-            const float norm_height = texture(u_height_map, norm_position).x;
-            position.xz = norm_position;
-            position.y = norm_height;
-            position.xyz *= u_world_scale;
-            position.w = 1.0f;  // mark point as valid
-        }
-    }
-
-    output_buffer[global_invocation_index] = position;
+    output_buffer[global_invocation_index] = vec4(position, is_valid);
 }
 )gl";
 
@@ -155,7 +147,7 @@ void main()
     static auto getComputeProgram() -> Program
     {
         static Program program;
-        if (program.getName() == 0)
+        if (!program.validate())
         {
             Guard<Shader> shader {Shader::Type::compute};
             auto c_str = getComputeShaderSource().c_str();
@@ -163,7 +155,11 @@ void main()
             shader->compile();
             if (shader->getParameter(Shader::Parameter::compile_status) != GL_TRUE)
             {
-                throw std::runtime_error("compute shader compilation failed");
+                const int len = shader->getParameter(Shader::Parameter::info_log_length);
+                std::string log;
+                log.resize(len);
+                shader->getInfoLog(len, nullptr, log.data());
+                throw std::runtime_error("compute shader compilation failed:\n" + std::move(log));
             }
 
             program = Program::create();
@@ -171,11 +167,11 @@ void main()
             program.link();
             if (program.getParameter(Program::Parameter::link_status) != GL_TRUE)
             {
-                char log[1024];
-                program.getInfoLog(1024, nullptr, log);
-                std::string msg {"compute shader program linking failed: "};
-                msg += log;
-                throw std::runtime_error(msg);
+                const int len = program.getParameter(Program::Parameter::info_log_length);
+                std::string log;
+                log.resize(len);
+                program.getInfoLog(len, nullptr, log.data());
+                throw std::runtime_error("compute shader linking failed:\n" + std::move(log));
             }
         }
         return program;
@@ -190,7 +186,7 @@ void main()
     std::vector<glm::vec3> computePlacement(const WorldData& world_data, float footprint,
                                             glm::vec2 lower_bound, glm::vec2 upper_bound)
     {
-        if (! glm::all(glm::lessThan(lower_bound, upper_bound)))
+        if (! glm::all(glm::lessThanEqual(lower_bound, upper_bound)))
             return {};
 
         auto program = getComputeProgram();
