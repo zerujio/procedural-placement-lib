@@ -71,41 +71,36 @@ namespace placement {
         .name = "u_norm_upper_bound"
     };
 
-    constexpr Definition dithering_matrix_def
-    {
-        .storage = StorageQualifier::constant,
-        .type = Type::mat4_,
-        .name = "dithering_matrix",
-        .init = {R"gl(
-                mat4(
-                    0, 12, 3, 15,
-                    8, 4, 11, 7,
-                    2, 14, 1, 13,
-                    10, 6, 9, 5
-                ) / 16)gl"}
-    };
-
-    static const BlockDefinition output_buffer_def
-    {
-        .layout = {.memory = LayoutQualifiers::Memory::std140, .binding = 0},
-        .storage = StorageQualifier::buffer,
-        .memory = MemoryQualifier::restrict | MemoryQualifier::writeonly,
-        .block_name = "OutputBuffer",
-        .defs {
-                Definition{
-                    .type = Type::vec4_,
-                    .name = "output_buffer",
-                    .array_size = -1
-                }
-        }
-    };
-
+    constexpr int position_buffer_binding = 0;
+    constexpr int index_buffer_binding = 1;
     static auto compute_shader_main_src =
 R"gl(
+layout(binding = 0, std430) restrict writeonly
+buffer PositionBuffer
+{
+    vec4 position_buffer[][4][4];
+};
+
+/*
+layout(binding = 1, std430) restrict writeonly
+buffer IndexBuffer
+{
+    uint index_buffer[][4][4];
+};
+*/
+
+const mat4 dithering_matrix =
+mat4(
+    0,  12, 3,  15,
+    8,  4,  11, 7,
+    2,  14, 1,  13,
+    10, 6,  9,  5
+) / 16;
+
 void main()
 {
-    const uint global_invocation_index = gl_GlobalInvocationID.y * gl_WorkGroupSize.x * gl_NumWorkGroups.x
-                                        + gl_GlobalInvocationID.x;
+    const uint group_index = gl_WorkGroupID.x + gl_WorkGroupID.y * gl_WorkGroupSize.x;
+
     // calculate position
     const vec2 tex_coord = (gl_GlobalInvocationID.xy + u_index_offset) * u_norm_footprint * 2.0f;
     const float normalized_height = texture(u_height_map, tex_coord).x;
@@ -114,11 +109,13 @@ void main()
     // determine validity
     const float density_value = texture(u_density_map, tex_coord).x;
     const float threshold_value = dithering_matrix[gl_LocalInvocationID.x][gl_LocalInvocationID.y];
-    const bool is_valid = all(greaterThanEqual(tex_coord, u_norm_lower_bound))
-                        && all(lessThan(tex_coord, u_norm_upper_bound))
-                        && density_value > threshold_value;
+    const bool is_valid =
+            all(greaterThanEqual(tex_coord, u_norm_lower_bound))
+            && all(lessThan(tex_coord, u_norm_upper_bound))
+            && density_value > threshold_value;
 
-    output_buffer[global_invocation_index] = vec4(position, is_valid);
+    // write out data
+    position_buffer[group_index][gl_LocalInvocationID.y][gl_LocalInvocationID.x] = vec4(position, is_valid);
 }
 )gl";
 
@@ -136,8 +133,8 @@ void main()
                 << footprint_def        << '\n'
                 << lower_bound_def      << '\n'
                 << upper_bound_def      << '\n'
-                << output_buffer_def    << '\n'
-                << dithering_matrix_def << '\n'
+                //<< output_buffer_def    << '\n'
+                //<< dithering_matrix_def << '\n'
                 << compute_shader_main_src;
             source_string = oss.str();
         }
@@ -230,8 +227,7 @@ void main()
         Guard<Buffer> output_buffer;
         output_buffer->allocateImmutable(sizeof(glm::vec4) * workgroup_count.x * workgroup_count.y * 16,
                                          Buffer::StorageFlags::dynamic_storage | Buffer::StorageFlags::map_read);
-        gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, output_buffer_def.layout.binding, output_buffer->getName());
-
+        gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, position_buffer_binding, output_buffer->getName());
         // dispatch compute
         gl.DispatchCompute(workgroup_count.x, workgroup_count.y, 1);
 

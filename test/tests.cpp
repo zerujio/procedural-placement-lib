@@ -82,9 +82,9 @@ TEST_CASE("Basic placement: one size, one density map", "[placement]")
 
     SECTION("Full area placement")
     {
-        world_data.scale = {10.0f, 1.0f, 10.0f};
-        auto points = placement::computePlacement(world_data, 0.5f, {0.0f, 0.0f},
-                                                  {world_data.scale.x, world_data.scale.z});
+        constexpr float footprint = 0.5f;
+        auto points = placement::computePlacement(world_data, footprint, {0.0f, 0.0f},
+                                                  {world_data.scale.x + footprint, world_data.scale.z + footprint});
         CHECK(points.size() == 100);
     }
 }
