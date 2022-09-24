@@ -4,6 +4,7 @@
 #include "glutils/guard.hpp"
 #include "glutils/buffer.hpp"
 #include "glutils/glsl_syntax.hpp"
+#include "glutils/gl.hpp"
 
 #include <glm/vector_relational.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -78,16 +79,14 @@ R"gl(
 layout(binding = 0, std430) restrict writeonly
 buffer PositionBuffer
 {
-    vec4 position_buffer[][4][4];
+    vec3 position_buffer[][4][4];
 };
 
-/*
 layout(binding = 1, std430) restrict writeonly
 buffer IndexBuffer
 {
     uint index_buffer[][4][4];
 };
-*/
 
 const mat4 dithering_matrix =
 mat4(
@@ -101,12 +100,12 @@ void main()
 {
     const uint group_index = gl_WorkGroupID.x + gl_WorkGroupID.y * gl_WorkGroupSize.x;
 
-    // calculate position
+    // position
     const vec2 tex_coord = (gl_GlobalInvocationID.xy + u_index_offset) * u_norm_footprint * 2.0f;
     const float normalized_height = texture(u_height_map, tex_coord).x;
     const vec3 position = vec3(tex_coord.x, normalized_height, tex_coord.y) * u_world_scale;
 
-    // determine validity
+    // validity
     const float density_value = texture(u_density_map, tex_coord).x;
     const float threshold_value = dithering_matrix[gl_LocalInvocationID.x][gl_LocalInvocationID.y];
     const bool is_valid =
@@ -114,10 +113,23 @@ void main()
             && all(lessThan(tex_coord, u_norm_upper_bound))
             && density_value > threshold_value;
 
-    // write out data
-    position_buffer[group_index][gl_LocalInvocationID.y][gl_LocalInvocationID.x] = vec4(position, is_valid);
+    // write results
+    position_buffer[group_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = position;
+    index_buffer[group_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = uint(is_valid);
 }
 )gl";
+/*
+def reduce(a):
+    group_size = 1
+    while group_size < len(a):
+        for i in range(len(a)):
+            group_index = i // group_size
+            if group_index % 2:
+                last_of_prev_group = group_index * group_size - 1
+                a[i] += a[last_of_prev_group]
+        group_size <<= 1
+    return a
+*/
 
     static auto getComputeShaderSource() -> const std::string&
     {
@@ -133,8 +145,6 @@ void main()
                 << footprint_def        << '\n'
                 << lower_bound_def      << '\n'
                 << upper_bound_def      << '\n'
-                //<< output_buffer_def    << '\n'
-                //<< dithering_matrix_def << '\n'
                 << compute_shader_main_src;
             source_string = oss.str();
         }
@@ -144,7 +154,7 @@ void main()
     static auto getComputeProgram() -> Program
     {
         static Program program;
-        if (!program.validate())
+        if (!gl.IsProgram(program.getName()))
         {
             Guard<Shader> shader {Shader::Type::compute};
             auto c_str = getComputeShaderSource().c_str();
@@ -224,18 +234,24 @@ void main()
         const glm::uvec2 workgroup_count = index_count / 4u + 1u;
 
         // allocate and bind output buffer
-        Guard<Buffer> output_buffer;
-        output_buffer->allocateImmutable(sizeof(glm::vec4) * workgroup_count.x * workgroup_count.y * 16,
+        Guard<Buffer> position_buffer;
+        position_buffer->allocateImmutable(sizeof(glm::vec3) * workgroup_count.x * workgroup_count.y * 16,
                                          Buffer::StorageFlags::dynamic_storage | Buffer::StorageFlags::map_read);
-        gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, position_buffer_binding, output_buffer->getName());
+        gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, position_buffer_binding, position_buffer->getName());
+
+        Guard<Buffer> index_buffer;
+        index_buffer->allocateImmutable(sizeof(uint) * workgroup_count.x * workgroup_count.y * 16,
+                                        Buffer::StorageFlags::dynamic_storage | Buffer::StorageFlags::map_read);
+        gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, index_buffer_binding, index_buffer->getName());
+
         // dispatch compute
         gl.DispatchCompute(workgroup_count.x, workgroup_count.y, 1);
 
         // read generated placement data
         gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-        const auto* data = static_cast<const glm::vec4 *>(output_buffer->map(Buffer::AccessMode::read_only));
-
-        if (!data)
+        const auto* positions = static_cast<const glm::vec3 *>(position_buffer->map(Buffer::AccessMode::read_only));
+        const auto* indices = static_cast<const uint*>(index_buffer->map(Buffer::AccessMode::read_only));
+        if (!positions or !indices)
         {
             throw std::runtime_error("output buffer mapping failed");
         }
@@ -245,12 +261,14 @@ void main()
 
         for (int i = 0; i < workgroup_count.x * workgroup_count.y * 16; i++)
         {
-            const auto point = data[i];
-            if (point.w != 0.0f)
+            const auto point = positions[i];
+            const uint valid = indices[i];
+            if (valid)
                 valid_positions.emplace_back(point);
         }
 
-        output_buffer->unmap();
+        position_buffer->unmap();
+        index_buffer->unmap();
 
         return valid_positions;
     }

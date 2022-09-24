@@ -1,8 +1,7 @@
 #include <placement.hpp>
 
-#include <glutils/gl.h>
+#include <glutils/gl.hpp>
 #include <glutils/debug.hpp>
-#include <glutils/guard.hpp>
 #include <GLFW/glfw3.h>
 #include <stb_image.h>
 
@@ -74,7 +73,7 @@ int main()
         }
 
         // load context for placement
-        placement::loadGL(glfwGetProcAddress);
+        //placement::loadGL(glfwGetProcAddress);
 
         // set world data (texture is used both as height and density map).
         placement::WorldData world_data{texture, texture};
