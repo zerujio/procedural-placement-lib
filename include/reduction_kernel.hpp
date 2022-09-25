@@ -1,8 +1,8 @@
 #ifndef PROCEDURALPLACEMENTLIB_REDUCTION_KERNEL_HPP
 #define PROCEDURALPLACEMENTLIB_REDUCTION_KERNEL_HPP
 
-#include <glutils/guard.hpp>
-#include <glutils/program.hpp>
+#include "glutils/guard.hpp"
+#include "glutils/program.hpp"
 
 namespace placement {
 
