@@ -1,4 +1,4 @@
-#include "reduction_kernel.hpp"
+#include "placement/reduction_kernel.hpp"
 
 namespace placement {
 } // placement

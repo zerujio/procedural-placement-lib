@@ -1,4 +1,5 @@
 add_library(procedural-placement-lib STATIC
+        gl_context.cpp
         placement.cpp
         generation_kernel.cpp
         reduction_kernel.cpp

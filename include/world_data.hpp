@@ -1,7 +1,7 @@
 #ifndef PROCEDURAL_PLACEMENT_LIB_WORLD_DATA_HPP
 #define PROCEDURAL_PLACEMENT_LIB_WORLD_DATA_HPP
 
-#include "gl_types.hpp"
+#include "placement/gl_types.hpp"
 
 namespace placement {
 

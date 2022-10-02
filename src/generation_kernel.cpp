@@ -1,6 +1,6 @@
-#include "generation_kernel.hpp"
+#include "placement/generation_kernel.hpp"
+#include "gl_context.hpp"
 
-#include "glutils/gl.hpp"
 #include "glutils/glsl_syntax.hpp"
 
 #include <string>

@@ -1,8 +1,7 @@
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
 
 #include "placement.hpp"
-#include "placement_pipeline.hpp"
+#include "placement/placement_pipeline.hpp"
 
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>

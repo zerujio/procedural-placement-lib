@@ -1,6 +1,6 @@
-#include "placement_pipeline.hpp"
+#include "placement/placement_pipeline.hpp"
+#include "gl_context.hpp"
 
-#include "glutils/gl.hpp"
 #include "glutils/guard.hpp"
 #include "glutils/buffer.hpp"
 
@@ -9,7 +9,6 @@
 #include <stdexcept>
 
 namespace placement {
-    using glutils::gl;
 
     void PlacementPipeline::setHeightTexture(unsigned int tex)
     {
