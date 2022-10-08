@@ -37,7 +37,7 @@ GLuint loadTexture(GladGLContext& gl, const char* path)
     return texture;
 }
 
-TEST_CASE("Simple placement", "[simple][placement]")
+TEST_CASE("PlacementPipeline", "[placement]")
 {
     struct GLFWInitGuard
     {
@@ -58,74 +58,37 @@ TEST_CASE("Simple placement", "[simple][placement]")
     const GLuint white_texture = loadTexture(gl, "assets/white.png");
     const GLuint black_texture = loadTexture(gl, "assets/black.png");
 
-    SECTION("Simple implementation")
+    placement::PlacementPipeline pipeline;
+    const glm::vec3 world_scale = {10.0f, 1.0f, 10.0f};
+    pipeline.setWorldScale(world_scale);
+    pipeline.setHeightTexture(black_texture);
+    pipeline.setDensityTexture(white_texture);
+
+    SECTION("Placement with < 0 area should return an empty vector")
     {
-        placement::WorldData world_data{black_texture, white_texture};
+        auto points = pipeline.computePlacement(1.0f, {0.0f, 0.0f}, {-1.0f, -1.0f});
+        CHECK(points.empty());
 
-        SECTION("Placement with < 0 area should return an empty vector")
-        {
-            auto points = placement::computePlacement(world_data, 1.0f, {0.0f, 0.0f}, {-1.0f, -1.0f});
-            CHECK(points.empty());
+        points = pipeline.computePlacement(1.0f, {0.0f, 0.0f}, {10.0f, -1.0f});
+        CHECK(points.empty());
 
-            points = placement::computePlacement(world_data, 1.0f, {0.0f, 0.0f}, {10.0f, -1.0f});
-            CHECK(points.empty());
-
-            points = placement::computePlacement(world_data, 1.0f, {0.0f, 0.0f}, {-1.0f, 10.0f});
-            CHECK(points.empty());
-        }
-
-        SECTION("Placement with space for a single object")
-        {
-            auto points = placement::computePlacement(world_data, 0.5f, {0.0f, 0.0f}, {1.0f, 1.0f});
-            CHECK(points.size() == 1);
-
-            points = placement::computePlacement(world_data, 0.5f, {1.5f, 1.5f}, {2.5f, 2.5f});
-            CHECK(points.size() == 1);
-        }
-
-        SECTION("Full area placement")
-        {
-            constexpr float footprint = 0.5f;
-            auto points = placement::computePlacement(world_data, footprint, {0.0f, 0.0f},
-                                                      {world_data.scale.x + footprint, world_data.scale.z + footprint});
-            CHECK(points.size() == 100);
-        }
+        points = pipeline.computePlacement(1.0f, {0.0f, 0.0f}, {-1.0f, 10.0f});
+        CHECK(points.empty());
     }
 
-    SECTION("Pipeline Implementation")
+    SECTION("Placement with space for a single object")
     {
-        placement::PlacementPipeline pipeline;
-        const glm::vec3 world_scale = {10.0f, 1.0f, 10.0f};
-        pipeline.setWorldScale(world_scale);
-        pipeline.setHeightTexture(black_texture);
-        pipeline.setDensityTexture(white_texture);
+        auto points = pipeline.computePlacement(0.5f, {0.0f, 0.0f}, {1.0f, 1.0f});
+        CHECK(points.size() == 1);
 
-        SECTION("Placement with < 0 area should return an empty vector")
-        {
-            auto points = pipeline.computePlacement(1.0f, {0.0f, 0.0f}, {-1.0f, -1.0f});
-            CHECK(points.empty());
+        points = pipeline.computePlacement(0.5f, {1.5f, 1.5f}, {2.5f, 2.5f});
+        CHECK(points.size() == 1);
+    }
 
-            points = pipeline.computePlacement(1.0f, {0.0f, 0.0f}, {10.0f, -1.0f});
-            CHECK(points.empty());
-
-            points = pipeline.computePlacement(1.0f, {0.0f, 0.0f}, {-1.0f, 10.0f});
-            CHECK(points.empty());
-        }
-
-        SECTION("Placement with space for a single object")
-        {
-            auto points = pipeline.computePlacement(0.5f, {0.0f, 0.0f}, {1.0f, 1.0f});
-            CHECK(points.size() == 1);
-
-            points = pipeline.computePlacement(0.5f, {1.5f, 1.5f}, {2.5f, 2.5f});
-            CHECK(points.size() == 1);
-        }
-
-        SECTION("Full area placement")
-        {
-            constexpr float footprint = 0.5f;
-            auto points = pipeline.computePlacement(footprint, {0.0f, 0.0f}, {world_scale.x + footprint, world_scale.z + footprint});
-            CHECK(points.size() == 100);
-        }
+    SECTION("Full area placement")
+    {
+        constexpr float footprint = 0.5f;
+        auto points = pipeline.computePlacement(footprint, {0.0f, 0.0f}, {world_scale.x + footprint, world_scale.z + footprint});
+        CHECK(points.size() == 100);
     }
 }

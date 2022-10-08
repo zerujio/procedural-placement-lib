@@ -1,6 +1,8 @@
 #ifndef PROCEDURALPLACEMENTLIB_GENERATION_KERNEL_HPP
 #define PROCEDURALPLACEMENTLIB_GENERATION_KERNEL_HPP
 
+#include "ssb_proxy.hpp"
+
 #include "glutils/program.hpp"
 #include "glutils/guard.hpp"
 
