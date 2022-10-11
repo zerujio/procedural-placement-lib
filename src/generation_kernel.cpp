@@ -46,42 +46,43 @@ namespace placement {
     };
 
     static const Definition height_tex_def {
-        .layout{.binding=GenerationKernel::heightmap_tex_unit},
+        .layout{.binding=GenerationKernel::s_default_heightmap_tex_unit},
         .storage = StorageQualifier::uniform,
         .type = Type::sampler2D,
         .name = "u_heightmap"
     };
 
     static const Definition density_tex_def {
-        .layout{.binding=GenerationKernel::densitymap_tex_unit},
+        .layout{.binding=GenerationKernel::s_default_densitymap_tex_unit},
         .storage = StorageQualifier::uniform,
         .type = Type::sampler2D,
         .name = "u_densitymap"
     };
 
-    static const std::string source_string {
+    const std::string GenerationKernel::source_string {
         (std::ostringstream()
         << "#version 450 core\n"
            "layout(local_size_x = 4, local_size_y = 4) in;\n"
-        << upper_bound_def << "\n"
         << lower_bound_def << "\n"
+        << upper_bound_def << "\n"
         << world_scale_def << "\n"
         << norm_footprint_def << "\n"
         << grid_offset_def << "\n"
         << height_tex_def << "\n"
         << density_tex_def << "\n"
         << R"glsl(
-struct Candidate
+layout(std430, binding=0)
+restrict writeonly
+buffer )glsl" << PlacementPipelineKernel::s_position_ssb_name << R"glsl(
 {
-    vec3 position;
-    uint index;
+    vec3 output_buffer[][4][4];
 };
 
-layout(binding=)glsl" << GenerationKernel::output_buffer_binding << R"glsl()
+layout(std430, binding=1)
 restrict writeonly
-buffer OutputBuffer
+buffer )glsl" << PlacementPipelineKernel::s_index_ssb_name << R"glsl(
 {
-    Candidate output_buffer[][4][4];
+    uint index_buffer[][4][4];
 };
 
 const mat4 dithering_matrix =
@@ -109,44 +110,22 @@ void main()
                         && density_value > threshold_value;
 
     // write results
-    //output_buffer[group_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = Candidate(position, uint(is_valid));
-    output_buffer[group_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] =
-        Candidate(vec3(u_lower_bound, u_norm_footprint), uint(is_valid));
+    output_buffer[group_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = position;
+    index_buffer[group_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = uint(is_valid);
 }
 )glsl").str()
     };
 
-    GenerationKernel::GenerationKernel()
-    {
-        Guard<Shader> shader {Shader::Type::compute};
-        auto c_str = source_string.c_str();
-        shader->setSource(1, &c_str);
-        shader->compile();
-        if (shader->getParameter(Shader::Parameter::compile_status) != GL_TRUE)
-        {
-            const int len = shader->getParameter(Shader::Parameter::info_log_length);
-            std::string log;
-            log.resize(len);
-            shader->getInfoLog(len, nullptr, log.data());
-            throw std::runtime_error(log);
-        }
+    GenerationKernel::GenerationKernel() :
+        PlacementPipelineKernel(source_string),
+        m_heightmap_tex(*this, height_tex_def.name),
+        m_densitymap_tex(*this, density_tex_def.name)
+    {}
 
-        m_program->attachShader(*shader);
-        m_program->link();
-        if (m_program->getParameter(Program::Parameter::link_status) != GL_TRUE)
-        {
-            const int len = m_program->getParameter(Program::Parameter::info_log_length);
-            std::string log;
-            log.resize(len);
-            m_program->getInfoLog(len, nullptr, log.data());
-            throw std::runtime_error(log);
-        }
-    }
-
-    void GenerationKernel::dispatchCompute(float footprint, glm::vec3 world_scale, glm::vec2 lower_bound,
-                                           glm::vec2 upper_bound) const
+    auto GenerationKernel::dispatchCompute(float footprint, glm::vec3 world_scale, glm::vec2 lower_bound,
+                                           glm::vec2 upper_bound) const -> glm::uvec2
     {
-        m_program->use();
+        useProgram();
 
         // footprint
         {
@@ -167,8 +146,10 @@ void main()
             gl.Uniform2ui(grid_offset_def.layout.location, grid_offset.x, grid_offset.y);
         }
 
-        const auto wg = getNumWorkGroups(footprint, lower_bound, upper_bound);
+        const auto wg = computeNumWorkGroups(footprint, lower_bound, upper_bound);
         gl.DispatchCompute(wg.x, wg.y, 1);
+
+        return wg;
     }
 
 

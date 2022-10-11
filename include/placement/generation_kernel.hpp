@@ -1,8 +1,9 @@
 #ifndef PROCEDURALPLACEMENTLIB_GENERATION_KERNEL_HPP
 #define PROCEDURALPLACEMENTLIB_GENERATION_KERNEL_HPP
 
-#include "ssb_proxy.hpp"
+#include "placement_pipeline_kernel.hpp"
 
+#include "glutils/buffer.hpp"
 #include "glutils/program.hpp"
 #include "glutils/guard.hpp"
 
@@ -10,59 +11,88 @@
 
 namespace placement {
 
-    /// Wrapper for the candidate generation compute shader.
-    class GenerationKernel
+    /// Wrapper for the candidate position generation compute shader.
+    class GenerationKernel final : public PlacementPipelineKernel
     {
     public:
-
-        static constexpr int heightmap_tex_unit = 0;
-
-        static constexpr int densitymap_tex_unit = 1;
-
-        static constexpr int output_buffer_binding = 0;
-
-        static constexpr glm::uvec2 work_group_size {4, 4};
-
         GenerationKernel();
 
-        /// compute the required number of workgroups for a given area
+        /// The texture unit the heightmap uniform is bound to by default.
+        static constexpr int s_default_heightmap_tex_unit = 0;
+
+        /// Set the texture unit the heightmap sampler uniform is bound to.
+        void setHeightmapTexUnit(glutils::GLuint index) const
+        {
+            m_heightmap_tex.setTextureUnit(*this, index);
+        }
+
+        /// Query from the GL the texture unit the heightmap sampler uniform is currently bound to.
         [[nodiscard]]
-        static constexpr auto getNumWorkGroups(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound) -> glm::uvec2
+        auto getHeightmapTexUnit() const -> glutils::GLuint
+        {
+            return m_heightmap_tex.getTextureUnit(*this);
+        }
+
+        /// The texture unit the densitymap uniform is bound to by default.
+        static constexpr int s_default_densitymap_tex_unit = 1;
+
+        /// Set the texture unit the densitymap sampler uniform is bound to.
+        void setDensitymapTexUnit(glutils::GLuint index) const
+        {
+            m_densitymap_tex.setTextureUnit(*this, index);
+        }
+
+        /// Query the texture unit the densitymap sampler uniform is currently bound to.
+        [[nodiscard]]
+        auto getDensitymapTexUnit() const -> glutils::GLuint
+        {
+            return m_densitymap_tex.getTextureUnit(*this);
+        }
+
+        /// The work group size of this kernel.
+        static constexpr glm::uvec2 work_group_size {4, 4};
+
+        /// compute the required number of workgroups for a given placement area and footprint
+        [[nodiscard]]
+        static constexpr auto computeNumWorkGroups(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound)
+        -> glm::uvec2
         {
             const glm::uvec2 min_invocations {(upper_bound - lower_bound) / (2.0f * footprint)};
             return min_invocations / work_group_size + 1u;
         }
 
+        /// compute the number of invocations the execution of the kernel with the given parameters will result in.
         [[nodiscard]]
-        static constexpr auto getNumInvocations(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound) -> glm::uvec2
+        static constexpr auto computeNumInvocations(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound)
+        -> glm::uvec2
         {
-            return getNumInvocations(getNumWorkGroups(footprint, lower_bound, upper_bound));
+            return computeNumInvocations(computeNumWorkGroups(footprint, lower_bound, upper_bound));
         }
 
         [[nodiscard]]
-        static constexpr auto getNumInvocations(glm::uvec2 num_work_groups) -> glm::uvec2
+        static constexpr auto computeNumInvocations(glm::uvec2 num_work_groups) -> glm::uvec2
         {
             return num_work_groups * work_group_size;
         }
 
-        /// compute the minimum size for the output buffer, in bytes.
-        [[nodiscard]]
-        static constexpr auto getRequiredBufferSize(glm::uvec2 num_work_groups) -> glutils::GLsizeiptr
-        {
-            const auto num_elements = num_work_groups * work_group_size;
-            return num_elements.x * num_elements.y * static_cast<glutils::GLsizeiptr>(sizeof(glm::vec4));
-        }
-
-        [[nodiscard]]
-        static constexpr auto getMinRequiredBufferSize(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound) -> glutils::GLsizeiptr
-        {
-            return getRequiredBufferSize(getNumWorkGroups(footprint, lower_bound, upper_bound));
-        }
-
-        void dispatchCompute(float footprint, glm::vec3 world_scale, glm::vec2 lower_bound, glm::vec2 upper_bound) const;
+        /**
+         * @brief Execute the generation kernel.
+         * This function requires that the index buffer, position bufer, height texture and density texture be correctly
+         * bound.
+         * @param footprint the collision radius for placed objects
+         * @param world_scale dimensions of the world
+         * @param lower_bound lower corner of the placement area
+         * @param upper_bound upper corner of the placement area
+         * @return the number of work groups executed.
+         */
+        auto dispatchCompute(float footprint, glm::vec3 world_scale, glm::vec2 lower_bound, glm::vec2 upper_bound) const
+            -> glm::uvec2;
 
     private:
-        glutils::Guard<glutils::Program> m_program;
+        static const std::string source_string;
+
+        TextureSampler m_heightmap_tex;
+        TextureSampler m_densitymap_tex;
     };
 
 } // placement

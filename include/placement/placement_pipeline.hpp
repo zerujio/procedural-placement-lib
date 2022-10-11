@@ -71,6 +71,8 @@ namespace placement {
 
         GenerationKernel m_generation_kernel;
         ReductionKernel m_reduction_kernel;
+        glutils::GLuint m_position_binding {};
+        glutils::GLuint m_index_binding;
     };
 
 } // placement
