@@ -71,18 +71,17 @@ namespace placement {
         << height_tex_def << "\n"
         << density_tex_def << "\n"
         << R"glsl(
-layout(std430, binding=0)
-restrict writeonly
-buffer )glsl" << PlacementPipelineKernel::s_position_ssb_name << R"glsl(
+struct Candidate
 {
-    vec3 output_buffer[][4][4];
+    vec3 position;
+    uint index;
 };
 
-layout(std430, binding=1)
+layout(std430, binding=)glsl" << PlacementPipelineKernel::default_ssb_binding << R"glsl()
 restrict writeonly
-buffer )glsl" << PlacementPipelineKernel::s_index_ssb_name << R"glsl(
+buffer )glsl" << PlacementPipelineKernel::s_ssb_name << R"glsl(
 {
-    uint index_buffer[][4][4];
+    Candidate output_buffer[][4][4];
 };
 
 const mat4 dithering_matrix =
@@ -110,46 +109,61 @@ void main()
                         && density_value > threshold_value;
 
     // write results
-    output_buffer[group_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = position;
-    index_buffer[group_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = uint(is_valid);
+    output_buffer[group_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = Candidate(position, uint(is_valid));
 }
 )glsl").str()
     };
 
     GenerationKernel::GenerationKernel() :
-        PlacementPipelineKernel(source_string),
-        m_heightmap_tex(*this, height_tex_def.name),
-        m_densitymap_tex(*this, density_tex_def.name)
+            PlacementPipelineKernel(source_string),
+            m_heightmap_loc(*this, height_tex_def.name),
+            m_densitymap_loc(*this, density_tex_def.name)
     {}
 
-    auto GenerationKernel::dispatchCompute(float footprint, glm::vec3 world_scale, glm::vec2 lower_bound,
-                                           glm::vec2 upper_bound) const -> glm::uvec2
+    void GenerationKernel::setArgs(const glm::vec3 &world_scale, float footprint, glm::vec2 lower_bound,
+                                   glm::vec2 upper_bound) const
     {
-        useProgram();
-
         // footprint
         {
             const auto norm_footprint = glm::vec2(footprint) / glm::vec2(world_scale.x, world_scale.z);
-            gl.Uniform2f(norm_footprint_def.layout.location, norm_footprint.x, norm_footprint.y);
+            setUniform(norm_footprint_def.layout.location, norm_footprint);
         }
 
         // world scale
-        gl.Uniform3f(world_scale_def.layout.location, world_scale.x, world_scale.y, world_scale.z);
+        setUniform(world_scale_def.layout.location, world_scale);
 
         // bounds
-        gl.Uniform2f(lower_bound_def.layout.location, lower_bound.x, lower_bound.y);
-        gl.Uniform2f(upper_bound_def.layout.location, upper_bound.x, upper_bound.y);
+        setUniform(lower_bound_def.layout.location, lower_bound);
+        setUniform(upper_bound_def.layout.location, upper_bound);
 
         // grid offset
         {
             const glm::uvec2 grid_offset {lower_bound / (2.0f * footprint)};
-            gl.Uniform2ui(grid_offset_def.layout.location, grid_offset.x, grid_offset.y);
+            setUniform(grid_offset_def.layout.location, grid_offset);
         }
+    }
 
-        const auto wg = computeNumWorkGroups(footprint, lower_bound, upper_bound);
-        gl.DispatchCompute(wg.x, wg.y, 1);
+    void GenerationKernel::dispatchCompute(glm::uvec2 num_work_groups) const
+    {
+        useProgram();
+        gl.DispatchCompute(num_work_groups.x, num_work_groups.y, 1);
+    }
 
+
+    auto GenerationKernel::operator() (glm::vec3 world_scale, float footprint, glm::vec2 lower_bound,
+            glm::vec2 upper_bound) const -> glm::uvec2
+    {
+        setArgs(world_scale, footprint, lower_bound, upper_bound);
+        const auto wg = calculateNumWorkGroups(footprint, lower_bound, upper_bound);
+        dispatchCompute(wg);
         return wg;
+    }
+
+    auto GenerationKernel::calculateNumWorkGroups(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound)
+    -> glm::uvec2
+    {
+        const glm::uvec2 min_invocations {(upper_bound - lower_bound) / (2.0f * footprint)};
+        return min_invocations / work_group_size + 1u;
     }
 
 

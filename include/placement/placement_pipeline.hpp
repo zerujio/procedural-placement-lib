@@ -60,6 +60,12 @@ namespace placement {
         [[nodiscard]]
         auto getWorldScale() const -> const glm::vec3&;
 
+        /**
+         * @brief set the seed for the random number generator.
+         * For a given set of heightmap, densitymap and world scale, the random seed completely determines placement.
+         */
+        void setRandomSeed() const;
+
     private:
 
         struct WorldData

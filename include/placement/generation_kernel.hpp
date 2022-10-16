@@ -17,67 +17,43 @@ namespace placement {
     public:
         GenerationKernel();
 
-        /// The texture unit the heightmap uniform is bound to by default.
+        /// The texture unit the heightmap sampler uniform is bound to by default.
         static constexpr int s_default_heightmap_tex_unit = 0;
 
-        /// Set the texture unit the heightmap sampler uniform is bound to.
-        void setHeightmapTexUnit(glutils::GLuint index) const
-        {
-            m_heightmap_tex.setTextureUnit(*this, index);
-        }
+        /// Get a proxy object to configure the heightmap texture sampler.
+        [[nodiscard]] auto getHeightmapSampler() const -> TextureSampler {return {*this, m_heightmap_loc};}
 
-        /// Query from the GL the texture unit the heightmap sampler uniform is currently bound to.
-        [[nodiscard]]
-        auto getHeightmapTexUnit() const -> glutils::GLuint
-        {
-            return m_heightmap_tex.getTextureUnit(*this);
-        }
-
-        /// The texture unit the densitymap uniform is bound to by default.
+        /// The texture unit the densitymap sampler uniform is bound to by default.
         static constexpr int s_default_densitymap_tex_unit = 1;
 
-        /// Set the texture unit the densitymap sampler uniform is bound to.
-        void setDensitymapTexUnit(glutils::GLuint index) const
-        {
-            m_densitymap_tex.setTextureUnit(*this, index);
-        }
-
-        /// Query the texture unit the densitymap sampler uniform is currently bound to.
-        [[nodiscard]]
-        auto getDensitymapTexUnit() const -> glutils::GLuint
-        {
-            return m_densitymap_tex.getTextureUnit(*this);
-        }
+        /// Get a proxy object to configure the densitymap texture sampler.
+        [[nodiscard]] auto getDensitymapSampler() const -> TextureSampler {return {*this, m_densitymap_loc};}
 
         /// The work group size of this kernel.
         static constexpr glm::uvec2 work_group_size {4, 4};
 
-        /// compute the required number of workgroups for a given placement area and footprint
+        /**
+         * @brief Calculate the number of work groups required to cover the given area.
+         * The number of invocations and, consequently, the number of candidates generated, can be obtained by
+         * multiplying this value with work_group_size.
+         * @param footprint Placement footprint.
+         * @param lower_bound Lower bound of the placement area.
+         * @param upper_bound Upper bound of the placement area.
+         * @return The required number of work groups in each dimension.
+         * @see setArgs()
+         */
         [[nodiscard]]
-        static constexpr auto computeNumWorkGroups(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound)
-        -> glm::uvec2
-        {
-            const glm::uvec2 min_invocations {(upper_bound - lower_bound) / (2.0f * footprint)};
-            return min_invocations / work_group_size + 1u;
-        }
+        static auto calculateNumWorkGroups(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound) -> glm::uvec2;
 
-        /// compute the number of invocations the execution of the kernel with the given parameters will result in.
-        [[nodiscard]]
-        static constexpr auto computeNumInvocations(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound)
-        -> glm::uvec2
-        {
-            return computeNumInvocations(computeNumWorkGroups(footprint, lower_bound, upper_bound));
-        }
+        /// Set input parameters.
+        void setArgs(const glm::vec3& world_scale, float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound) const;
 
-        [[nodiscard]]
-        static constexpr auto computeNumInvocations(glm::uvec2 num_work_groups) -> glm::uvec2
-        {
-            return num_work_groups * work_group_size;
-        }
+        /// Execute the kernel.
+        void dispatchCompute(glm::uvec2 num_work_groups) const;
 
         /**
          * @brief Execute the generation kernel.
-         * This function requires that the index buffer, position bufer, height texture and density texture be correctly
+         * This function requires that the index buffer, position buffer, height texture and density texture be correctly
          * bound.
          * @param footprint the collision radius for placed objects
          * @param world_scale dimensions of the world
@@ -85,14 +61,14 @@ namespace placement {
          * @param upper_bound upper corner of the placement area
          * @return the number of work groups executed.
          */
-        auto dispatchCompute(float footprint, glm::vec3 world_scale, glm::vec2 lower_bound, glm::vec2 upper_bound) const
+        auto operator() (glm::vec3 world_scale, float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound) const
             -> glm::uvec2;
 
     private:
         static const std::string source_string;
 
-        TextureSampler m_heightmap_tex;
-        TextureSampler m_densitymap_tex;
+        UniformLocation m_heightmap_loc;
+        UniformLocation m_densitymap_loc;
     };
 
 } // placement
