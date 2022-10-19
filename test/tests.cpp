@@ -38,7 +38,6 @@ auto operator<< (std::ostream& out, std::vector<T> vector) ->std::ostream&
     return out << "]";
 }
 
-template<class T>
 auto operator<< (std::ostream& out, placement::PlacementPipelineKernel::Candidate candidate) -> std::ostream &
 {
     return out << "{" << candidate.position << ", " << candidate.index << "}";
@@ -55,101 +54,87 @@ struct Deleter
     void operator() (T* ptr) { DeleteFunction(ptr); }
 };
 
-class TestContext
+GladGLContext gl;
+
+auto loadTexture(const char* path) -> GLuint
+{
+    GLuint texture;
+    glm::ivec2 texture_size;
+    int channels;
+    std::unique_ptr<stbi_uc[], Deleter<stbi_image_free>> texture_data
+            {stbi_load(path, &texture_size.x, &texture_size.y, &channels, 0)};
+
+      REQUIRE(texture_data);
+
+    gl.GenTextures(1, &texture);
+    gl.BindTexture(GL_TEXTURE_2D, texture);
+    const GLenum formats[]{GL_RED, GL_RG, GL_RGB, GL_RGBA};
+    const GLenum format = formats[channels - 1];
+    gl.TexImage2D(GL_TEXTURE_2D, 0, format, texture_size.x, texture_size.y, 0, format, GL_UNSIGNED_BYTE,
+                  texture_data.get());
+    gl.GenerateMipmap(GL_TEXTURE_2D);
+
+    return texture;
+}
+
+class ContextInitializer : public Catch::TestEventListenerBase
 {
 public:
-    TestContext()
+    using Catch::TestEventListenerBase::TestEventListenerBase;
+
+    void testRunStarting(const Catch::TestRunInfo&) override
     {
-        glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
+        if (!glfwInit())
+        {
+            const char* msg = nullptr;
+            glfwGetError(&msg);
+            throw std::runtime_error(msg);
+        }
+
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-        window = decltype(window)(glfwCreateWindow(1, 1, "TEST", nullptr, nullptr));
-        if (!window)
-            throw std::runtime_error("window creation failed");
-        glfwMakeContextCurrent(window.get());
+
+        m_window = glfwCreateWindow(1, 1, "TEST", nullptr, nullptr);
+        if (!m_window)
+        {
+            const char* msg = nullptr;
+            glfwGetError(&msg);
+            throw std::runtime_error(msg);
+        }
+        glfwMakeContextCurrent(m_window);
 
         if (!gladLoadGLContext(&gl, glfwGetProcAddress) or !placement::loadGLContext(glfwGetProcAddress))
             throw std::runtime_error("OpenGL context loading failed");
-
-        gl.DebugMessageCallback(TestContext::GLDebugMessage, nullptr);
     }
 
-    auto loadTexture(const char* path) const -> GLuint
+    void testRunEnded(const Catch::TestRunStats&) override
     {
-        GLuint texture;
-        glm::ivec2 texture_size;
-        int channels;
-        std::unique_ptr<stbi_uc[], Deleter<stbi_image_free>> texture_data
-                {stbi_load(path, &texture_size.x, &texture_size.y, &channels, 0)};
-
-        REQUIRE(texture_data);
-
-        gl.GenTextures(1, &texture);
-        gl.BindTexture(GL_TEXTURE_2D, texture);
-        const GLenum formats[]{GL_RED, GL_RG, GL_RGB, GL_RGBA};
-        const GLenum format = formats[channels - 1];
-        gl.TexImage2D(GL_TEXTURE_2D, 0, format, texture_size.x, texture_size.y, 0, format, GL_UNSIGNED_BYTE,
-                      texture_data.get());
-        gl.GenerateMipmap(GL_TEXTURE_2D);
-
-        return texture;
+        glfwDestroyWindow(m_window);
+        glfwTerminate();
     }
 
-    static void GLDebugMessage(GLenum source, GLenum type, unsigned int id, GLenum severity, GLsizei length,
-                               const char *message, const void *user_ptr)
+    void sectionEnded(const Catch::SectionStats&) override
     {
-#define GL_DEBUG_MESSAGE "[OpenGL debug message " << id << "]\n"                                        \
-                            << "Source  : " << glutils::getDebugMessageSourceString(source) << "\n"     \
-                            << "Type    : " << glutils::getDebugMessageTypeString(type)     << "\n"     \
-                            << "Severity: " << glutils::getDebugMessageSeverityString(severity) << "\n" \
-                            << "Message : " << message << "\n"
-
-        switch (severity)
-        {
-            case GL_DEBUG_SEVERITY_HIGH:
-                FAIL(GL_DEBUG_MESSAGE);
-                break;
-
-            case GL_DEBUG_SEVERITY_MEDIUM:
-                FAIL_CHECK(GL_DEBUG_MESSAGE);
-                break;
-
-            case GL_DEBUG_SEVERITY_LOW:
-                WARN(GL_DEBUG_MESSAGE);
-                break;
-
-            case GL_DEBUG_SEVERITY_NOTIFICATION:
-            default:
-                INFO(GL_DEBUG_MESSAGE)
-                break;
-        }
+        gl.Finish();
     }
-
-    [[nodiscard]]
-    auto getGL() const -> const GladGLContext& {return gl;}
 
 private:
-    struct GLFWInitGuard
-    {
-        GLFWInitGuard() { glfwInit(); }
-        ~GLFWInitGuard() { glfwTerminate(); }
-    } glfw_init_guard;
-
-    std::unique_ptr<GLFWwindow, Deleter<glfwDestroyWindow>> window;
-
-    GladGLContext gl {};
+    GLFWwindow* m_window;
 };
+
+CATCH_REGISTER_LISTENER(ContextInitializer)
+
 
 TEST_CASE("PlacementPipeline", "[placement][pipeline]")
 {
-    TestContext context;
-
-    const GLuint white_texture = context.loadTexture("assets/white.png");
-    const GLuint black_texture = context.loadTexture("assets/black.png");
-
     placement::PlacementPipeline pipeline;
+
     const glm::vec3 world_scale = {10.0f, 1.0f, 10.0f};
     pipeline.setWorldScale(world_scale);
+
+    const auto black_texture = loadTexture("assets/black.png");
     pipeline.setHeightTexture(black_texture);
+
+    const auto white_texture = loadTexture("assets/white.png");
     pipeline.setDensityTexture(white_texture);
 
     SECTION("Placement with < 0 area should return an empty vector")
@@ -182,35 +167,51 @@ TEST_CASE("PlacementPipeline", "[placement][pipeline]")
         CHECK(point.z < upper_bound.y);
     }
 
-    SECTION("Full area placement")
+    SECTION("Placement area == world size")
     {
-        constexpr float footprint = 0.5f;
-        const glm::vec2 lower_bound {0.0f, 0.0f};
-        const glm::vec2 upper_bound {world_scale.x + footprint, world_scale.z + footprint};
+        const float footprint = GENERATE(take(3, random(0.1f, 1.0f)));
+        INFO("footprint = " << footprint);
 
-        auto points = pipeline.computePlacement(footprint, lower_bound, upper_bound);
-        CHECK(points.size() == 100);
+        const glm::vec2 lower_bound{0.0f};
+        INFO("lower_bound = " << lower_bound);
 
-        for (int i = 0; i < points.size(); i++)
+        const glm::vec2 upper_bound{world_scale.x, world_scale.z};
+        INFO("upper_bound = " << upper_bound);
+
+        SECTION("Boundary and separation")
         {
-            INFO("i = " << i);
-            INFO("points[i] = {" << points[i].x << ", " << points[i].y << ", " << points[i].z << "}");
-            const glm::vec2 point2d {points[i].x, points[i].z};
-            CHECK(glm::all(glm::greaterThanEqual(point2d, lower_bound) && glm::lessThan(point2d, upper_bound)));
-            for (int j = 0; j < i; j++)
+            auto points = pipeline.computePlacement(footprint, lower_bound, upper_bound);
+
+            for (int i = 0; i < points.size(); i++)
             {
-                INFO("j = " << j);
-                INFO("points[j] = {" << points[j].x << ", " << points[j].y << ", " << points[j].z << "}");
-                CHECK(glm::length(point2d - glm::vec2(points[j].x, points[j].z)) >= 2 * footprint);
+                INFO("i = " << i);
+                INFO("points[i] = {" << points[i].x << ", " << points[i].y << ", " << points[i].z << "}");
+                const glm::vec2 point2d{points[i].x, points[i].z};
+                CHECK(glm::all(glm::greaterThanEqual(point2d, lower_bound) && glm::lessThan(point2d, upper_bound)));
+                for (int j = 0; j < i; j++)
+                {
+                    INFO("j = " << j);
+                    INFO("points[j] = {" << points[j].x << ", " << points[j].y << ", " << points[j].z << "}");
+                    CHECK(glm::length(point2d - glm::vec2(points[j].x, points[j].z)) >= Approx(2.0f * footprint));
+                }
             }
         }
+
+        SECTION("Determinism")
+        {
+            const auto reference_points = pipeline.computePlacement(footprint, lower_bound, upper_bound);
+
+            for (int i = 0; i < 3; i++)
+                CHECK(pipeline.computePlacement(footprint, lower_bound, upper_bound) == reference_points);
+        }
     }
+
+    const GLuint textures[] = {white_texture, black_texture};
+    gl.DeleteTextures(2, &textures[0]);
 }
 
 TEMPLATE_TEST_CASE("Common PlacementPipelineKernel operations", "[kernel][pipeline]", GenerationKernel, ReductionKernel)
 {
-    TestContext context;
-
     TestType kernel;
 
     SECTION("Default SSB binding points")
@@ -225,7 +226,7 @@ TEMPLATE_TEST_CASE("Common PlacementPipelineKernel operations", "[kernel][pipeli
         constexpr GLsizeiptr buffer_size = sizeof(typename TestType::Candidate) * element_count;
         buffer->allocateImmutable(buffer_size, glutils::Buffer::StorageFlags(), nullptr);
 
-        const GLuint binding_index = GENERATE(1, 4, 7, 3, 0, 2);
+        const GLuint binding_index = GENERATE(range(1, 8));
 
         const auto ssb = kernel.getShaderStorageBlock();
         ssb.setBindingIndex(binding_index);
@@ -235,8 +236,6 @@ TEMPLATE_TEST_CASE("Common PlacementPipelineKernel operations", "[kernel][pipeli
 
 TEST_CASE("GenerationKernel", "[generation][kernel][pipeline]")
 {
-    TestContext context;
-
     GenerationKernel kernel;
 
     SECTION("default value")
@@ -254,11 +253,95 @@ TEST_CASE("GenerationKernel", "[generation][kernel][pipeline]")
         sampler.setTextureUnit(texture_unit);
         CHECK(sampler.getTextureUnit() == texture_unit);
     }
+
+    SECTION("correctness")
+    {
+        const glm::vec3 world_scale {1.0f};
+
+        const auto footprint = GENERATE(take(3, random(0.0f, 0.5f)));
+        INFO("footprint=" << footprint);
+
+        const auto offset_x = GENERATE(take(3, random(0.0f, 1.0f)));
+        const auto offset_y = GENERATE(take(3, random(0.0f, 1.0f)));
+        const glm::vec2 lower_bound {offset_x, offset_y};
+        INFO("lower_bound=" << lower_bound);
+
+        const auto length_x = GENERATE(take(3, random(0.0f, 1.0f)));
+        const auto length_y = GENERATE(take(3, random(0.0f, 1.0f)));
+        const glm::vec2 upper_bound = lower_bound + glm::vec2(length_x, length_y);
+        INFO("upper_bound=" << upper_bound);
+
+        const auto white_texture = loadTexture("assets/white.png");
+        const auto black_texture = loadTexture("assets/black.png");
+        gl.BindTextureUnit(GenerationKernel::s_default_heightmap_tex_unit, black_texture);
+        gl.BindTextureUnit(GenerationKernel::s_default_densitymap_tex_unit, white_texture);
+
+        const auto num_work_groups = kernel.setArgs(world_scale, footprint, lower_bound, upper_bound);
+        const auto num_invocations = num_work_groups * GenerationKernel::work_group_size;
+
+        REQUIRE(num_work_groups != glm::uvec2(0, 0));
+
+        glutils::Guard<glutils::Buffer> buffer;
+        buffer->allocateImmutable(sizeof(GenerationKernel::Candidate) * num_invocations.x * num_invocations.y,
+                                  glutils::Buffer::StorageFlags::map_read,
+                                  nullptr);
+        buffer->bindBase(glutils::Buffer::IndexedTarget::shader_storage, GenerationKernel::default_ssb_binding);
+
+        kernel.dispatchCompute(num_work_groups); // << execute compute kernel
+
+        gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+        const auto candidate_count = num_invocations.x * num_invocations.y;
+
+        using Candidate = GenerationKernel::Candidate;
+        std::vector<Candidate> candidates;
+        candidates.resize(candidate_count);
+        buffer->read(0, sizeof(Candidate) * candidate_count, candidates.data());
+
+        SECTION("boundaries")
+        {
+            for (int i = 0; i < candidate_count; i++)
+            {
+                const Candidate candidate = candidates[i];
+                INFO("candidate = " << candidate);
+
+                const glm::vec2 position2d {candidate.position.x, candidate.position.z};
+
+                if (candidate.index)
+                {
+                    CHECK(candidate.index == 1);
+                    CHECK(glm::all(glm::greaterThanEqual(position2d, lower_bound)));
+                    CHECK(glm::all(glm::lessThan(position2d, upper_bound)));
+                }
+                else
+                {
+                    CHECK(glm::any(glm::bvec4(
+                            glm::lessThan(position2d, lower_bound),
+                            glm::greaterThanEqual(position2d, upper_bound))));
+                }
+            }
+        }
+
+        SECTION("separation")
+        {
+            for (int i = 0; i < candidate_count; i++)
+            {
+                INFO("i = " << i);
+                for (int j = 0; j < i; j++)
+                {
+                    INFO("j = " << j);
+                    CHECK(glm::length(candidates[i].position - candidates[j].position) >= Approx(2 * footprint));
+                }
+            }
+        }
+
+        const GLuint textures[] = {white_texture, black_texture};
+        gl.DeleteTextures(2, &textures[0]);
+    }
 }
 
 TEST_CASE("ReductionKernel", "[reduction][kernel][pipeline]")
 {
-    TestContext context;
     ReductionKernel kernel;
 
     using Candidate = ReductionKernel::Candidate;
@@ -284,6 +367,15 @@ TEST_CASE("ReductionKernel", "[reduction][kernel][pipeline]")
         return candidate_buffer;
     };
 
+    using Indices = std::vector<unsigned int>;
+    const auto indices = GENERATE(Indices{0}, Indices{1},
+                                  Indices{0, 0}, Indices{0, 1}, Indices{1, 0}, Indices{1, 1},
+                                  take(6, chunk(10, random(0u, 1u))),
+                                  take(5, chunk(20, random(0u, 1u))),
+                                  take(3, chunk(64, random(0u, 1u))),
+                                  take(3, chunk(333, random(0u, 1u))),
+                                  take(1, chunk(1024, random(0u, 1u))));
+
     std::default_random_engine generator {0};
     std::uniform_real_distribution distribution;
     auto random_vec3 = [&]()
@@ -291,19 +383,14 @@ TEST_CASE("ReductionKernel", "[reduction][kernel][pipeline]")
         return glm::vec3(distribution(generator), distribution(generator), distribution(generator));
     };
 
-    using Indices = std::vector<unsigned int>;
-    const std::vector<unsigned int> indices = GENERATE(Indices{0}, Indices{1},
-                                                    Indices{0, 1}, Indices{1, 0}, Indices{0, 0}, Indices{1, 1},
-                                                    Indices{0, 1, 0, 1}, Indices{1, 1, 0, 1}, Indices{1, 1, 1, 1},
-                                                    Indices{1, 1, 1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 1},
-                                                    Indices{0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1,
-                                                            1, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 1, 1, 0, 0, 0, 1});
-
     std::vector<Candidate> candidates;
     candidates.reserve(indices.size());
     for (auto index : indices)
         candidates.emplace_back(Candidate{random_vec3(), index});
 
+    const auto num_work_groups = candidates.size() / ReductionKernel::work_group_size
+            + candidates.size() % ReductionKernel::work_group_size != 0;
+    candidates.resize(num_work_groups * ReductionKernel::work_group_size); // insert zero padding
     const auto buffer_size = candidates.size() * sizeof(Candidate);
 
     glutils::Guard<glutils::Buffer> buffer;
@@ -313,11 +400,8 @@ TEST_CASE("ReductionKernel", "[reduction][kernel][pipeline]")
     buffer->write(0, buffer_size, candidates.data());
     buffer->bindRange(glutils::Buffer::IndexedTarget::shader_storage, ReductionKernel::default_ssb_binding, 0, buffer_size);
 
-    const auto num_work_groups = indices.size() / ReductionKernel::work_group_size
-            + indices.size() % ReductionKernel::work_group_size != 0;
-
     kernel(num_work_groups); // <<< dispatch compute
-    context.getGL().MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     auto results = static_cast<const Candidate*>(buffer->map(glutils::Buffer::AccessMode::read_only));
     const auto expected = sequential_reduction(candidates);

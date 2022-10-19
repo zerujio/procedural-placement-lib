@@ -62,7 +62,8 @@ namespace placement {
     const std::string GenerationKernel::source_string {
         (std::ostringstream()
         << "#version 450 core\n"
-           "layout(local_size_x = 4, local_size_y = 4) in;\n"
+        <<"layout(local_size_x = " << GenerationKernel::work_group_size.x
+        << ", local_size_y = " << GenerationKernel::work_group_size.y << ") in;\n"
         << lower_bound_def << "\n"
         << upper_bound_def << "\n"
         << world_scale_def << "\n"
@@ -81,20 +82,24 @@ layout(std430, binding=)glsl" << PlacementPipelineKernel::default_ssb_binding <<
 restrict writeonly
 buffer )glsl" << PlacementPipelineKernel::s_ssb_name << R"glsl(
 {
-    Candidate output_buffer[][4][4];
+    Candidate output_buffer[][8][8];
 };
 
-const mat4 dithering_matrix =
-mat4(
-    0,  12, 3,  15,
-    8,  4,  11, 7,
-    2,  14, 1,  13,
-    10, 6,  9,  5
-) / 16;
+const float dithering_matrix[8][8] =
+{
+    { 0, 32,  8, 40,  2, 34, 10, 42},
+    {48, 16, 56, 24, 50, 18, 58, 26},
+    {12, 44,  4, 36, 14, 46,  6, 38},
+    {60, 28, 52, 20, 62, 30, 54, 22},
+    { 3, 35, 11, 43,  1, 33,  9, 41},
+    {51, 19, 59, 27, 49, 17, 57, 25},
+    {15, 47,  7, 39, 13, 45,  5, 37},
+    {63, 31, 55, 23, 61, 29, 53, 21}
+};
 
 void main()
 {
-    const uint group_index = gl_WorkGroupID.x + gl_WorkGroupID.y * gl_WorkGroupSize.x;
+    const uint group_index = gl_WorkGroupID.x + gl_WorkGroupID.y * gl_NumWorkGroups.x;
 
     // position
     const vec2 tex_coord = (gl_GlobalInvocationID.xy + u_grid_offset) * u_norm_footprint * 2.0f;
@@ -103,7 +108,7 @@ void main()
 
     // validity
     const float density_value = texture(u_densitymap, tex_coord).x;
-    const float threshold_value = dithering_matrix[gl_LocalInvocationID.x][gl_LocalInvocationID.y];
+    const float threshold_value = dithering_matrix[gl_LocalInvocationID.x][gl_LocalInvocationID.y] / 64.0f;
     const bool is_valid = all(greaterThanEqual(position.xz, u_lower_bound))
                         && all(lessThan(position.xz, u_upper_bound))
                         && density_value > threshold_value;
@@ -120,7 +125,7 @@ void main()
             m_densitymap_loc(*this, density_tex_def.name)
     {}
 
-    void GenerationKernel::setArgs(const glm::vec3 &world_scale, float footprint, glm::vec2 lower_bound,
+    glm::uvec2 GenerationKernel::setArgs(const glm::vec3 &world_scale, float footprint, glm::vec2 lower_bound,
                                    glm::vec2 upper_bound) const
     {
         // footprint
@@ -141,6 +146,8 @@ void main()
             const glm::uvec2 grid_offset {lower_bound / (2.0f * footprint)};
             setUniform(grid_offset_def.layout.location, grid_offset);
         }
+
+        return calculateNumWorkGroups(footprint, lower_bound, upper_bound);
     }
 
     void GenerationKernel::dispatchCompute(glm::uvec2 num_work_groups) const
@@ -153,8 +160,7 @@ void main()
     auto GenerationKernel::operator() (glm::vec3 world_scale, float footprint, glm::vec2 lower_bound,
             glm::vec2 upper_bound) const -> glm::uvec2
     {
-        setArgs(world_scale, footprint, lower_bound, upper_bound);
-        const auto wg = calculateNumWorkGroups(footprint, lower_bound, upper_bound);
+        const auto wg = setArgs(world_scale, footprint, lower_bound, upper_bound);
         dispatchCompute(wg);
         return wg;
     }

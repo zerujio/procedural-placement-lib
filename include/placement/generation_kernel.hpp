@@ -30,7 +30,7 @@ namespace placement {
         [[nodiscard]] auto getDensitymapSampler() const -> TextureSampler {return {*this, m_densitymap_loc};}
 
         /// The work group size of this kernel.
-        static constexpr glm::uvec2 work_group_size {4, 4};
+        static constexpr glm::uvec2 work_group_size {8, 8};
 
         /**
          * @brief Calculate the number of work groups required to cover the given area.
@@ -45,8 +45,8 @@ namespace placement {
         [[nodiscard]]
         static auto calculateNumWorkGroups(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound) -> glm::uvec2;
 
-        /// Set input parameters.
-        void setArgs(const glm::vec3& world_scale, float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound) const;
+        /// Set input parameters. @return the number of workgroups required for this set of arguments.
+        glm::uvec2 setArgs(const glm::vec3& world_scale, float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound) const;
 
         /// Execute the kernel.
         void dispatchCompute(glm::uvec2 num_work_groups) const;

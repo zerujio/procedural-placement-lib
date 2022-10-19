@@ -72,7 +72,7 @@ namespace placement {
         {
             unsigned int height_tex;
             unsigned int density_tex;
-            glm::vec3 world_scale;
+            glm::vec3 scale;
         } m_world_data;
 
         GenerationKernel m_generation_kernel;
