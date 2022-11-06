@@ -97,14 +97,14 @@ int main()
     pipeline.setHeightTexture(black_texture);
     pipeline.setWorldScale({1.f, 1.f, 1.f});
 
-    std::vector<glm::vec3> positions = pipeline.computePlacement(0.01f, glm::vec2(-1.f), glm::vec2(1.f));
+    const std::vector<glm::vec3> positions = pipeline.computePlacement(0.01f, glm::vec2(0.f), glm::vec2(1.f));
 
     // rendering
     simple::Renderer renderer;
 
     simple::Camera camera;
 
-    simple::ShaderProgram program ("void main() {gl_Position = (model_matrix * vec4(vertex_position, 1.0f)).xzyw;}",
+    simple::ShaderProgram program ("void main() {gl_Position = vec4((vertex_position.xzy - vec3()), 1.0f);}",
                                    "void main() {frag_color = vec4(1.0f);}");
 
     simple::Mesh point_mesh (positions);

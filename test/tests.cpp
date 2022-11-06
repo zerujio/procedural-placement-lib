@@ -8,51 +8,14 @@
 #include <stb_image.h>
 
 #include <memory>
-#include <random>
 #include <ostream>
+#include <algorithm>
 
-// defined to here to make it available to catch.hpp
-template<auto L, typename T, auto Q>
-auto operator<< (std::ostream& out, glm::vec<L, T, Q> v) -> std::ostream&
-{
-    constexpr auto sep = ", ";
-    out << "{" << v.x << sep << v.y;
-    if constexpr (L > 2)
-    {
-        out << sep << v.z;
-        if constexpr (L > 3)
-            out << sep << v.w;
-    }
-    return out << "}";
-}
-
-template<class T>
-auto operator<< (std::ostream& out, std::vector<T> vector) ->std::ostream&
-{
-    if (vector.empty())
-        return out << "[]";
-
-    out << "[";
-    for (const T& x : vector)
-        out << x << ", ";
-    return out << "]";
-}
-
-auto operator<< (std::ostream& out, placement::PlacementPipelineKernel::Candidate candidate) -> std::ostream &
-{
-    return out << "{" << candidate.position << ", " << candidate.index << "}";
-}
-
+// included here to make it available to catch.hpp
+#include "ostream_operators.hpp"
 #include "catch.hpp"
 
 using namespace placement;
-
-template <auto DeleteFunction>
-struct Deleter
-{
-    template <class T>
-    void operator() (T* ptr) { DeleteFunction(ptr); }
-};
 
 GladGLContext gl;
 
@@ -61,10 +24,10 @@ auto loadTexture(const char* path) -> GLuint
     GLuint texture;
     glm::ivec2 texture_size;
     int channels;
-    std::unique_ptr<stbi_uc[], Deleter<stbi_image_free>> texture_data
-            {stbi_load(path, &texture_size.x, &texture_size.y, &channels, 0)};
+    std::unique_ptr<stbi_uc[]> texture_data {stbi_load(path, &texture_size.x, &texture_size.y, &channels, 0)};
 
-      REQUIRE(texture_data);
+    if (!texture_data)
+        throw std::runtime_error(stbi_failure_reason());
 
     gl.GenTextures(1, &texture);
     gl.BindTexture(GL_TEXTURE_2D, texture);
@@ -92,6 +55,7 @@ public:
         }
 
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+        glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
 
         m_window = glfwCreateWindow(1, 1, "TEST", nullptr, nullptr);
         if (!m_window)
@@ -104,6 +68,9 @@ public:
 
         if (!gladLoadGLContext(&gl, glfwGetProcAddress) or !placement::loadGLContext(glfwGetProcAddress))
             throw std::runtime_error("OpenGL context loading failed");
+
+        gl.DebugMessageCallback(glDebugCallback, nullptr);
+        gl.Enable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
     }
 
     void testRunEnded(const Catch::TestRunStats&) override
@@ -118,7 +85,17 @@ public:
     }
 
 private:
-    GLFWwindow* m_window;
+
+    GLFWwindow* m_window {nullptr};
+
+    static void glDebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length,
+                                const GLchar* message, const void* user_ptr)
+    {
+        if (severity == GL_DEBUG_SEVERITY_NOTIFICATION)
+            return;
+
+        UNSCOPED_INFO("[GL DEBUG MESSAGE " << id << "] " << message);
+    }
 };
 
 CATCH_REGISTER_LISTENER(ContextInitializer)
@@ -167,43 +144,69 @@ TEST_CASE("PlacementPipeline", "[placement][pipeline]")
         CHECK(point.z < upper_bound.y);
     }
 
-    SECTION("Placement area == world size")
+    SECTION("determinism (trivial)")
     {
-        const float footprint = GENERATE(take(3, random(0.1f, 1.0f)));
-        INFO("footprint = " << footprint);
+        pipeline.setWorldScale({1.0f, 1.0f, 1.0f});
 
-        const glm::vec2 lower_bound{0.0f};
-        INFO("lower_bound = " << lower_bound);
+        const auto positions0 = pipeline.computePlacement(0.01f, glm::vec2(0.f), glm::vec2(1.f));
+        const auto positions1 = pipeline.computePlacement(0.01f, glm::vec2(0.f), glm::vec2(1.f));
 
-        const glm::vec2 upper_bound{world_scale.x, world_scale.z};
-        INFO("upper_bound = " << upper_bound);
+        CHECK(!positions0.empty());
+        CHECK(!positions1.empty());
+        CHECK(positions0.size() == positions1.size());
+        CHECK(positions0 == positions1);
+    }
 
-        SECTION("Boundary and separation")
+    const float footprint = GENERATE(take(3, random(0.01f, 0.1f)));
+    INFO("footprint = " << footprint);
+
+    const float boundary_offset_x = GENERATE(take(3, random(0.f, 0.8f)));
+    const float boundary_offset_y = GENERATE(take(3, random(0.f, 0.8f)));
+    const glm::vec2 lower_bound(boundary_offset_x, boundary_offset_y);
+
+    INFO("lower_bound = " << lower_bound);
+
+    const float boundary_size_x = GENERATE(take(3, random(0.2f, 1.0f)));
+    const float boundary_size_y = GENERATE(take(3, random(0.2f, 1.0f)));
+    const glm::vec2 upper_bound = lower_bound + glm::vec2(boundary_size_x, boundary_size_y);
+
+    INFO("upper_bound = " << upper_bound);
+
+    SECTION("Boundary and separation")
+    {
+        auto points = pipeline.computePlacement(footprint, lower_bound, upper_bound);
+
+        REQUIRE(!points.empty());
+
+        for (int i = 0; i < points.size(); i++)
         {
-            auto points = pipeline.computePlacement(footprint, lower_bound, upper_bound);
+            INFO("i = " << i);
+            INFO("points[i] = {" << points[i].x << ", " << points[i].y << ", " << points[i].z << "}");
+            const glm::vec2 point2d{points[i].x, points[i].z};
+            CHECK(glm::all(glm::greaterThanEqual(point2d, lower_bound) && glm::lessThan(point2d, upper_bound)));
 
-            for (int i = 0; i < points.size(); i++)
+            for (int j = 0; j < i; j++)
             {
-                INFO("i = " << i);
-                INFO("points[i] = {" << points[i].x << ", " << points[i].y << ", " << points[i].z << "}");
-                const glm::vec2 point2d{points[i].x, points[i].z};
-                CHECK(glm::all(glm::greaterThanEqual(point2d, lower_bound) && glm::lessThan(point2d, upper_bound)));
-                for (int j = 0; j < i; j++)
-                {
-                    INFO("j = " << j);
-                    INFO("points[j] = {" << points[j].x << ", " << points[j].y << ", " << points[j].z << "}");
-                    CHECK(glm::length(point2d - glm::vec2(points[j].x, points[j].z)) >= Approx(2.0f * footprint));
-                }
+                INFO("j = " << j);
+                INFO("points[j] = {" << points[j].x << ", " << points[j].y << ", " << points[j].z << "}");
+                CHECK(glm::length(point2d - glm::vec2(points[j].x, points[j].z)) >= Approx(2.0f * footprint));
             }
         }
+    }
 
-        SECTION("Determinism")
-        {
-            const auto reference_points = pipeline.computePlacement(footprint, lower_bound, upper_bound);
+    SECTION("Determinism")
+    {
+        const auto result0 = pipeline.computePlacement(footprint, lower_bound, upper_bound);
+        REQUIRE(!result0.empty());
 
-            for (int i = 0; i < 3; i++)
-                CHECK(pipeline.computePlacement(footprint, lower_bound, upper_bound) == reference_points);
-        }
+        const auto result1 = pipeline.computePlacement(footprint, lower_bound, upper_bound);
+        REQUIRE(!result1.empty());
+
+        REQUIRE(result0 == result1);
+
+        const auto result2 = pipeline.computePlacement(footprint * 1.3f , lower_bound, upper_bound);
+
+        CHECK(result0 != result2);
     }
 
     const GLuint textures[] = {white_texture, black_texture};
@@ -335,16 +338,31 @@ TEST_CASE("GenerationKernel", "[generation][kernel][pipeline]")
             }
         }
 
+        SECTION("determinism")
+        {
+            std::vector<Candidate> candidates_duplicate;
+            candidates_duplicate.resize(candidate_count);
+
+            kernel.dispatchCompute(num_work_groups);
+
+            buffer->read(0, sizeof(Candidate) * candidate_count, candidates_duplicate.data());
+
+            std::equal(candidates.cbegin(), candidates.cend(),
+                       candidates_duplicate.cbegin(), candidates_duplicate.cend(),
+                       [](const Candidate& l, const Candidate& r){return l.position == r.position && l.index == r.index;});
+        }
+
         const GLuint textures[] = {white_texture, black_texture};
         gl.DeleteTextures(2, &textures[0]);
     }
 }
 
+
 TEST_CASE("ReductionKernel", "[reduction][kernel][pipeline]")
 {
-    ReductionKernel kernel;
+    using Candidate = PlacementPipelineKernel::Candidate;
 
-    using Candidate = ReductionKernel::Candidate;
+    ReductionKernel kernel;
 
     auto sequential_reduction = [](std::vector<Candidate> candidate_buffer)
     {
@@ -376,17 +394,10 @@ TEST_CASE("ReductionKernel", "[reduction][kernel][pipeline]")
                                   take(3, chunk(333, random(0u, 1u))),
                                   take(1, chunk(1024, random(0u, 1u))));
 
-    std::default_random_engine generator {0};
-    std::uniform_real_distribution distribution;
-    auto random_vec3 = [&]()
-    {
-        return glm::vec3(distribution(generator), distribution(generator), distribution(generator));
-    };
-
     std::vector<Candidate> candidates;
     candidates.reserve(indices.size());
     for (auto index : indices)
-        candidates.emplace_back(Candidate{random_vec3(), index});
+        candidates.emplace_back(Candidate{glm::vec3(static_cast<float>(candidates.size())), index});
 
     const auto num_work_groups = candidates.size() / ReductionKernel::work_group_size
             + candidates.size() % ReductionKernel::work_group_size != 0;
@@ -394,23 +405,23 @@ TEST_CASE("ReductionKernel", "[reduction][kernel][pipeline]")
     const auto buffer_size = candidates.size() * sizeof(Candidate);
 
     glutils::Guard<glutils::Buffer> buffer;
-    buffer->allocateImmutable(buffer_size,
-                              glutils::Buffer::StorageFlags::map_read | glutils::Buffer::StorageFlags::dynamic_storage,
-                              nullptr);
-    buffer->write(0, buffer_size, candidates.data());
-    buffer->bindRange(glutils::Buffer::IndexedTarget::shader_storage, ReductionKernel::default_ssb_binding, 0, buffer_size);
+    buffer->allocateImmutable(buffer_size, glutils::Buffer::StorageFlags::none, candidates.data());
+    buffer->bindRange(glutils::Buffer::IndexedTarget::shader_storage, ReductionKernel::default_ssb_binding, 0,
+                      buffer_size);
 
     kernel(num_work_groups); // <<< dispatch compute
+
     gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-    auto results = static_cast<const Candidate*>(buffer->map(glutils::Buffer::AccessMode::read_only));
-    const auto expected = sequential_reduction(candidates);
+    auto actual_values = candidates;
+    buffer->read(0, buffer_size, actual_values.data());
 
-    for (std::size_t i = 0; i < candidates.size(); i++)
-    {
-        INFO("i=" << i);
-        CHECK(results[i].index == expected[i].index);
-        CHECK(results[i].position == expected[i].position);
-    }
-    buffer->unmap();
+    const auto expected_values = sequential_reduction(candidates);
+
+    INFO("Initial values:  " << candidates      << "\ncount: " << candidates.size());
+    INFO("Expected values: " << expected_values << "\ncount: " << expected_values.size());
+    INFO("Actual values:   " << actual_values   << "\ncount: " << actual_values.size());
+    CHECK(std::equal(expected_values.cbegin(), expected_values.cend(),
+                     actual_values.cbegin(), actual_values.cend(),
+                     [](const Candidate& l, const Candidate& r){return l.position == r.position && l.index == r.index;}));
 }
