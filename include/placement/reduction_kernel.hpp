@@ -34,6 +34,13 @@ namespace placement {
         /// Number of invocations per work group
         static constexpr unsigned int work_group_size = 64;
 
+        /// compute the required number of workgroups for a given number of elements.
+        [[nodiscard]]
+        static constexpr auto computeNumWorkGroups(const std::size_t element_count) -> std::size_t
+        {
+            return element_count / work_group_size + 1;
+        }
+
     private:
         static const std::string source_string;
     };

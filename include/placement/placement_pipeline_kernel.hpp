@@ -21,25 +21,39 @@ namespace placement {
         using ComputeKernel::ComputeKernel;
 
         /// Default shader storage block binding index
-        static constexpr glutils::GLuint default_ssb_binding = 0;
+        static constexpr glutils::GLuint default_position_ssb_binding = 0;
+        static constexpr glutils::GLuint default_index_ssb_binding = 1;
 
-        /// Access the shader storage block for the candidate buffer.
+        /// Access the shader storage block for the buffers.
         [[nodiscard]]
-        auto getShaderStorageBlock() const -> ShaderStorageBlock {return {*this, m_ssb};}
+        auto getPositionShaderStorageBlock() const -> ShaderStorageBlock {return {*this, m_position_ssb};}
 
-        /// An struct with identical layout and alignment to the elements of the candidate buffer.
-        struct Candidate
+        [[nodiscard]]
+        auto getIndexShaderStorageBlock() const -> ShaderStorageBlock {return {*this, m_index_ssb};}
+
+        /// Get the required size of a shader storage block for a given number of elements.
+        [[nodiscard]]
+        static auto getPositionBufferRequiredSize(glutils::GLsizeiptr element_count) -> glutils::GLsizeiptr
         {
-            glm::vec3 position;
-            unsigned int index;
-        };
+            // alignment of vec3 is that of vec4 in shader storage blocks
+            return element_count * static_cast<glutils::GLsizeiptr>(sizeof(glm::vec4));
+        }
+
+        [[nodiscard]]
+        static auto getIndexBufferRequiredSize(glutils::GLsizeiptr element_count) -> glutils::GLsizeiptr
+        {
+            return element_count * static_cast<glutils::GLsizeiptr>(sizeof(glutils::GLuint));
+        }
 
     protected:
-        static constexpr auto s_ssb_name = "CandidateBuffer";
+        static constexpr auto s_position_ssb_name = "PositionBuffer";
+        static constexpr auto s_index_ssb_name = "IndexBuffer";
 
     private:
         using ShaderStorageBlockIndex = ProgramResourceIndex<glutils::Program::Interface::shader_storage_block>;
-        ShaderStorageBlockIndex m_ssb {*this, s_ssb_name};
+
+        ShaderStorageBlockIndex m_position_ssb {*this, s_position_ssb_name};
+        ShaderStorageBlockIndex m_index_ssb {*this, s_index_ssb_name};
     };
 
 } // placement

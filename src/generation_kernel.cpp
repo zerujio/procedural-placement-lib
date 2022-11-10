@@ -72,20 +72,22 @@ namespace placement {
         << height_tex_def << "\n"
         << density_tex_def << "\n"
         << R"glsl(
-struct Candidate
-{
-    vec3 position;
-    uint index;
-};
 
-layout(std430, binding=)glsl" << PlacementPipelineKernel::default_ssb_binding << R"glsl()
+layout(std430, binding=)glsl" << PlacementPipelineKernel::default_position_ssb_binding << R"glsl()
 restrict writeonly
-buffer )glsl" << PlacementPipelineKernel::s_ssb_name << R"glsl(
+buffer )glsl" << PlacementPipelineKernel::s_position_ssb_name << R"glsl(
 {
-    Candidate output_buffer[][8][8];
+    vec3 position_buffer[][gl_WorkGroupSize.x][gl_WorkGroupSize.y];
 };
 
-const float dithering_matrix[8][8] =
+layout(std430, binding=)glsl" << PlacementPipelineKernel::default_index_ssb_binding << R"glsl()
+restrict writeonly
+buffer )glsl" << PlacementPipelineKernel::s_index_ssb_name << R"glsl(
+{
+    uint index_buffer[][gl_WorkGroupSize.x][gl_WorkGroupSize.y];
+};
+
+const float dithering_matrix[gl_WorkGroupSize.x][gl_WorkGroupSize.y] =
 {
     { 0, 32,  8, 40,  2, 34, 10, 42},
     {48, 16, 56, 24, 50, 18, 58, 26},
@@ -114,7 +116,8 @@ void main()
                         && density_value > threshold_value;
 
     // write results
-    output_buffer[group_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = Candidate(position, uint(is_valid));
+    position_buffer[group_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = position;
+    index_buffer[group_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = uint(is_valid);
 }
 )glsl").str()
     };

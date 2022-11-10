@@ -32,9 +32,4 @@ auto operator<< (std::ostream& out, std::vector<T> vector) ->std::ostream&
     return out << "]";
 }
 
-auto operator<< (std::ostream& out, placement::PlacementPipelineKernel::Candidate candidate) -> std::ostream &
-{
-    return out << "{" << candidate.position << ", " << candidate.index << "}";
-}
-
 #endif //PROCEDURALPLACEMENTLIB_OSTREAM_OPERATORS_H
