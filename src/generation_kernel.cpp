@@ -59,11 +59,11 @@ namespace placement {
         .name = "u_densitymap"
     };
 
-    const std::string GenerationKernel::source_string {
+    const std::string GenerationKernel::s_source_string {
         (std::ostringstream()
-        << "#version 450 core\n"
-        <<"layout(local_size_x = " << GenerationKernel::work_group_size.x
-        << ", local_size_y = " << GenerationKernel::work_group_size.y << ") in;\n"
+                << "#version 450 core\n"
+                << "layout(local_size_x = " << GenerationKernel::s_work_group_size.x
+                << ", local_size_y = " << GenerationKernel::s_work_group_size.y << ") in;\n"
         << lower_bound_def << "\n"
         << upper_bound_def << "\n"
         << world_scale_def << "\n"
@@ -123,13 +123,13 @@ void main()
     };
 
     GenerationKernel::GenerationKernel() :
-            PlacementPipelineKernel(source_string),
+            PlacementPipelineKernel(s_source_string),
             m_heightmap_loc(*this, height_tex_def.name),
             m_densitymap_loc(*this, density_tex_def.name)
     {}
 
-    glm::uvec2 GenerationKernel::setArgs(const glm::vec3 &world_scale, float footprint, glm::vec2 lower_bound,
-                                   glm::vec2 upper_bound) const
+    std::size_t GenerationKernel::setArgs(const glm::vec3 &world_scale, float footprint, glm::vec2 lower_bound,
+                                   glm::vec2 upper_bound)
     {
         // footprint
         {
@@ -150,29 +150,23 @@ void main()
             setUniform(grid_offset_def.layout.location, grid_offset);
         }
 
-        return calculateNumWorkGroups(footprint, lower_bound, upper_bound);
+        m_num_work_groups = m_calculateNumWorkGroups(footprint, lower_bound, upper_bound);
+
+        return calculateCandidateCount();
     }
 
-    void GenerationKernel::dispatchCompute(glm::uvec2 num_work_groups) const
+    void GenerationKernel::dispatchCompute() const
     {
         useProgram();
-        gl.DispatchCompute(num_work_groups.x, num_work_groups.y, 1);
+        gl.DispatchCompute(m_num_work_groups.x, m_num_work_groups.y, 1);
+        m_ensureOutputVisibility();
     }
 
-
-    auto GenerationKernel::operator() (glm::vec3 world_scale, float footprint, glm::vec2 lower_bound,
-            glm::vec2 upper_bound) const -> glm::uvec2
-    {
-        const auto wg = setArgs(world_scale, footprint, lower_bound, upper_bound);
-        dispatchCompute(wg);
-        return wg;
-    }
-
-    auto GenerationKernel::calculateNumWorkGroups(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound)
+    auto GenerationKernel::m_calculateNumWorkGroups(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound)
     -> glm::uvec2
     {
         const glm::uvec2 min_invocations {(upper_bound - lower_bound) / (2.0f * footprint)};
-        return min_invocations / work_group_size + 1u;
+        return min_invocations / s_work_group_size + 1u;
     }
 
 

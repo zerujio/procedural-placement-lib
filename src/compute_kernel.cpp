@@ -40,25 +40,24 @@ namespace placement {
         m_location(kernel.m_program->getResourceLocation(glutils::Program::Interface::uniform, uniform_name))
     {}
 
-    auto ComputeKernel::InterfaceBlockBase::m_getBindingIndex(
-            ComputeKernel::InterfaceBlockBase::Type type) const -> glutils::GLuint
+    auto ComputeKernel::InterfaceBlockBase::m_queryBindingIndex(const ComputeKernel& kernel,
+                                                                ComputeKernel::InterfaceBlockBase::Type type)
+                                                                -> glutils::GLuint
     {
-        GLuint index;
         const GLenum prop = GL_BUFFER_BINDING;
-        m_program.getResource(static_cast<GLenum>(type), m_block_index, 1, &prop, 1, nullptr,
-                              reinterpret_cast<GLint*>(&index));
-        return index;
+        kernel.m_program->getResource(static_cast<GLenum>(type), m_resource_index.get(), 1, &prop, 1, nullptr,
+                                      reinterpret_cast<GLint*>(&m_binding_index));
+        return m_binding_index;
     }
 
-    void ComputeKernel::TextureSampler::setTextureUnit(glutils::GLuint texture_unit) const
+    void ComputeKernel::TextureSampler::setTextureUnit(const ComputeKernel& kernel, glutils::GLuint texture_unit) const
     {
-        gl.ProgramUniform1i(m_program.getName(), m_location, texture_unit);
+        kernel.setUniform<GLint>(m_location, texture_unit);
     }
 
-    auto ComputeKernel::TextureSampler::getTextureUnit() const -> glutils::GLuint
+    auto ComputeKernel::TextureSampler::queryTextureUnit(const placement::ComputeKernel &kernel) -> glutils::GLuint
     {
-        GLuint result;
-        gl.GetUniformuiv(m_program.getName(), m_location, &result);
-        return result;
+        gl.GetUniformuiv(kernel.m_program->getName(), m_location, &m_tex_unit);
+        return m_tex_unit;
     }
 } // placement

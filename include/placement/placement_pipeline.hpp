@@ -31,7 +31,7 @@ namespace placement {
          * @return an array of positions within the placement area, separated from each other by at least 2x @p footprint.
          */
          [[nodiscard]]
-         auto computePlacement(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound) const -> std::vector<glm::vec3>;
+         auto computePlacement(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound) -> std::vector<glm::vec3>;
 
         /**
          * @brief The heightmap texture.

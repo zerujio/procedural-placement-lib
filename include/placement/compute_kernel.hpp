@@ -27,11 +27,11 @@ namespace placement {
 
         ComputeKernel(unsigned int count, const char** source_strings);
 
+    protected:
         /// Equivalent to calling glUseProgram with this kernel's program name.
         void useProgram() const;
 
         // Various utility classes
-    protected:
 
         class ProgramResourceIndexBase
         {
@@ -52,8 +52,62 @@ namespace placement {
         {
         public:
             ProgramResourceIndex(const ComputeKernel& kernel, const char* resource_name) :
-                ProgramResourceIndexBase(kernel, Interface, resource_name) {}
+                    ProgramResourceIndexBase(kernel, Interface, resource_name) {}
         };
+
+        class InterfaceBlockBase
+        {
+        public:
+            /**
+             * @brief get the current binding index of this interface block.
+             * This value is cached. If the binding is modified by any means other than InterfaceBlock::setBindingIndex()
+             * the value returned by this function will become outdated. To update it, call queryBindingIndex().
+             * @return the current binding index.
+             */
+            [[nodiscard]]
+            auto getBindingIndex() const -> glutils::GLuint { return m_binding_index; }
+
+        protected:
+            using Type = glutils::Program::Interface;
+
+            explicit InterfaceBlockBase(const ComputeKernel& kernel, ProgramResourceIndexBase resource_index, Type type)
+            : m_resource_index(resource_index)
+            {
+                m_queryBindingIndex(kernel, type);
+            }
+
+            auto m_queryBindingIndex(const ComputeKernel& kernel, Type type) -> glutils::GLuint;
+
+            ProgramResourceIndexBase m_resource_index;
+            glutils::GLuint m_binding_index {0};
+        };
+
+        /// Lightweight object for manipulating uniform and shader storage interface block binding points.
+        template<glutils::Program::Interface InterfaceType>
+        class InterfaceBlock : public InterfaceBlockBase
+        {
+            static_assert(InterfaceType == Type::uniform_block || InterfaceType == Type::shader_storage_block,
+                          "An interface block must be either a uniform block or a shader storage block");
+        public:
+            InterfaceBlock(const ComputeKernel& kernel, ProgramResourceIndex<InterfaceType> resource_index) :
+                    InterfaceBlockBase(kernel, resource_index, InterfaceType)
+            {}
+
+            /// Construct from the name of the interface block.
+            InterfaceBlock(const ComputeKernel& kernel, const char* name) : InterfaceBlock(kernel, {kernel, name}) {}
+
+            /// Change the binding point.
+            void setBindingIndex(const ComputeKernel& kernel, glutils::GLuint index) const
+            {
+                if constexpr (InterfaceType == Type::uniform_block)
+                    kernel.m_program->setUniformBlockBinding(m_resource_index.get(), index);
+                else if constexpr (InterfaceType == Type::shader_storage_block)
+                    kernel.m_program->setShaderStorageBlockBinding(m_resource_index.get(), index);
+            }
+        };
+
+        using UniformBlock = InterfaceBlock<glutils::Program::Interface::uniform_block>;
+        using ShaderStorageBlock = InterfaceBlock<glutils::Program::Interface::shader_storage_block>;
 
         /// Queries and stores the location of a uniform.
         struct UniformLocation
@@ -71,74 +125,34 @@ namespace placement {
             glutils::GLint m_location;
         };
 
-    public:
 
-        // These are various utility classes
-
-        /// Lightweight object for manipulating uniform and shader storage interface block binding points.
-        class InterfaceBlockBase
-        {
-        protected:
-            using Type = glutils::Program::Interface;
-
-            InterfaceBlockBase(const ComputeKernel& kernel, glutils::GLuint resource_index)
-            : m_program(*kernel.m_program), m_block_index(resource_index) {}
-
-            [[nodiscard]] auto m_getBindingIndex(Type type) const -> glutils::GLuint;
-
-            glutils::Program m_program;
-            glutils::GLuint m_block_index;
-        };
-
-        template<glutils::Program::Interface InterfaceType>
-        class InterfaceBlock : public InterfaceBlockBase
-        {
-            static_assert(InterfaceType == Type::uniform_block || InterfaceType == Type::shader_storage_block,
-                    "An interface block must be either a uniform block or a shader storage block");
-        public:
-            InterfaceBlock(const ComputeKernel& kernel, ProgramResourceIndex<InterfaceType> resource_index) :
-                InterfaceBlockBase(kernel, resource_index.get())
-            {}
-
-            /// Query (from the GL) the index of the current binding point.
-            [[nodiscard]] auto getBindingIndex() const -> glutils::GLuint {return m_getBindingIndex(InterfaceType);}
-
-            /// Change the binding point.
-            void setBindingIndex(glutils::GLuint index) const
-            {
-                if constexpr (InterfaceType == Type::uniform_block)
-                    m_program.setUniformBlockBinding(m_block_index, index);
-                else if constexpr (InterfaceType == Type::shader_storage_block)
-                    m_program.setShaderStorageBlockBinding(m_block_index, index);
-            }
-        };
-
-        using UniformBlock = InterfaceBlock<glutils::Program::Interface::uniform_block>;
-        using ShaderStorageBlock = InterfaceBlock<glutils::Program::Interface::shader_storage_block>;
-
-
-        /// Lightweight for setting and querying the texture unit of a sampler uniform
+        /// Lightweight object for setting and querying the texture unit of a sampler uniform
         class TextureSampler
         {
         public:
-            TextureSampler(const ComputeKernel& kernel, UniformLocation location)
-            : m_program(*kernel.m_program), m_location(location.get()) {}
+            TextureSampler(const ComputeKernel& kernel, UniformLocation location) : m_location(location)
+            {
+                queryTextureUnit(kernel);
+            }
 
             /// Set the texture unit for this sampler
-            void setTextureUnit(glutils::GLuint index) const;
+            void setTextureUnit(const ComputeKernel& kernel, glutils::GLuint index) const;
 
             /**
-             * @brief Query the texture unit this sampler is currently bound to.
-             * Note that this performs a "glGet*" call, which may cause synchronization (i.e. a stall) of the GL pipeline.
+             * @brief Get the cached texture unit index.
+             * If the texture unit binding has been changed in any way other than calling setTextureUnit() on this
+             * instance, then the value returned by this function will be outdated. To update it, call queryTextureUnit().
+             * @return the current texture unit
              */
-            [[nodiscard]] auto getTextureUnit() const -> glutils::GLuint;
+            [[nodiscard]]
+            auto getTextureUnit() const -> glutils::GLuint { return m_tex_unit; }
 
+            /// Query the GL for the current texture unit index (and update the cached value).
+            auto queryTextureUnit(const ComputeKernel& kernel) -> glutils::GLuint;
         private:
-            glutils::Program m_program;
-            glutils::GLint m_location;
+            glutils::GLuint m_tex_unit {0};
+            UniformLocation m_location;
         };
-
-    protected:
 
         template<typename T>
         void setUniform(glutils::GLint location, T value) const

@@ -279,33 +279,32 @@ TEST_CASE("GenerationKernel", "[generation][kernel][pipeline]")
         gl.BindTextureUnit(GenerationKernel::s_default_heightmap_tex_unit, black_texture);
         gl.BindTextureUnit(GenerationKernel::s_default_densitymap_tex_unit, white_texture);
 
-        const auto num_work_groups = kernel.setArgs(world_scale, footprint, lower_bound, upper_bound);
-        const auto num_invocations = num_work_groups * GenerationKernel::work_group_size;
+        const auto candidate_count = kernel.setArgs(world_scale, footprint, lower_bound, upper_bound);
 
-        REQUIRE(num_work_groups != glm::uvec2(0, 0));
-
-        const auto candidate_count = num_invocations.x * num_invocations.y;
-
-        const auto position_buffer_size = GenerationKernel::getPositionBufferRequiredSize(candidate_count);
-        const auto index_buffer_size = GenerationKernel::getIndexBufferRequiredSize(candidate_count);
+        REQUIRE(candidate_count > 0);
 
         glutils::Guard<glutils::Buffer> buffer;
-        buffer->allocateImmutable(position_buffer_size + index_buffer_size,
+        const glutils::BufferRange position_buffer_range {
+            *buffer,
+            0,
+            static_cast<GLsizeiptr>(GenerationKernel::calculatePositionBufferSize(candidate_count))
+        };
+        const glutils::BufferRange index_buffer_range {
+            *buffer,
+            position_buffer_range.size,
+            static_cast<GLsizeiptr>(GenerationKernel::calculateIndexBufferSize(candidate_count))
+        };
+
+        buffer->allocateImmutable(position_buffer_range.size + index_buffer_range.size,
                                   glutils::Buffer::StorageFlags::map_read,
                                   nullptr);
-
-        const glutils::BufferRange position_buffer_range {*buffer, 0, position_buffer_size};
-        const glutils::BufferRange index_buffer_range {*buffer, position_buffer_size, index_buffer_size};
-
 
         position_buffer_range.bindRange(glutils::Buffer::IndexedTarget::shader_storage,
                                         GenerationKernel::default_position_ssb_binding);
         index_buffer_range.bindRange(glutils::Buffer::IndexedTarget::shader_storage,
                                      GenerationKernel::default_index_ssb_binding);
 
-        kernel.dispatchCompute(num_work_groups); // << execute compute kernel
-
-        gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+        kernel.dispatchCompute(); // << execute compute kernel
 
         // read results
         std::vector<glm::vec4> positions;
@@ -362,7 +361,7 @@ TEST_CASE("GenerationKernel", "[generation][kernel][pipeline]")
             std::vector<GLuint> indices_duplicate;
             indices_duplicate.resize(candidate_count);
 
-            kernel.dispatchCompute(num_work_groups);
+            kernel.dispatchCompute();
 
             position_buffer_range.read(positions_duplicate.data());
             index_buffer_range.read(indices_duplicate.data());
@@ -381,27 +380,7 @@ TEST_CASE("ReductionKernel", "[reduction][kernel][pipeline]")
 {
     ReductionKernel kernel;
 
-    auto sequential_reduction = [](std::vector<glm::vec3> position_buffer, std::vector<GLuint> index_buffer)
-    {
-        const auto index_buffer_copy = index_buffer;
-
-        unsigned int index_acc = 0;
-        for (auto& index : index_buffer)
-        {
-            index_acc += index;
-            index = index_acc;
-        }
-
-        for (int i = 0; i < position_buffer.size(); i++)
-        {
-            const bool valid = index_buffer_copy[i];
-            if (valid)
-                position_buffer[index_buffer[i] - 1] = position_buffer[i];
-        }
-
-        return std::make_pair(position_buffer, index_buffer);
-    };
-
+    // generate test data
     using Indices = std::vector<unsigned int>;
     auto indices = GENERATE(Indices{0}, Indices{1},
                                   Indices{0, 0}, Indices{0, 1}, Indices{1, 0}, Indices{1, 1},
@@ -409,58 +388,130 @@ TEST_CASE("ReductionKernel", "[reduction][kernel][pipeline]")
                                   take(5, chunk(20, random(0u, 1u))),
                                   take(3, chunk(64, random(0u, 1u))),
                                   take(3, chunk(333, random(0u, 1u))),
-                                  take(1, chunk(1024, random(0u, 1u))));
+                                  take(3, chunk(1024, random(0u, 1u))),
+                                  take(3, chunk(15000, random(0u, 1u))));
+
+    CAPTURE(indices.size());
+    INFO("Initial state:")
+    CAPTURE(indices);
 
     std::vector<glm::vec4> vec4_positions;
     while (vec4_positions.size() < indices.size())
         vec4_positions.emplace_back(glm::vec4(static_cast<float>(vec4_positions.size())));
 
-    const auto num_work_groups = ReductionKernel::computeNumWorkGroups(indices.size());
-
-    // insert zero padding
-    const auto padded_count = num_work_groups * ReductionKernel::work_group_size;
-    vec4_positions.resize(padded_count);
-    indices.resize(padded_count);
-
+    // allocate gpu memory
     glutils::Guard<glutils::Buffer> buffer;
-    const glutils::BufferRange position_range {*buffer, 0, ReductionKernel::getPositionBufferRequiredSize(padded_count)};
-    const glutils::BufferRange index_range {*buffer, position_range.size, ReductionKernel::getIndexBufferRequiredSize(padded_count)};
+    const glutils::BufferRange position_range {
+        *buffer,
+        0,
+        static_cast<GLsizeiptr>(ReductionKernel::calculatePositionBufferSize(vec4_positions.size()))};
+
+    const glutils::BufferRange index_range {
+        *buffer,
+        position_range.size,
+        static_cast<GLsizeiptr>(ReductionKernel::calculateIndexBufferSize(indices.size()))};
 
     buffer->allocateImmutable(position_range.size + index_range.size, glutils::Buffer::StorageFlags::dynamic_storage, nullptr);
 
-    position_range.write(vec4_positions.data());
     position_range.bindRange(glutils::Buffer::IndexedTarget::shader_storage, ReductionKernel::default_position_ssb_binding);
-
-    index_range.write(indices.data());
     index_range.bindRange(glutils::Buffer::IndexedTarget::shader_storage, ReductionKernel::default_index_ssb_binding);
 
-    kernel(num_work_groups); // <<< dispatch compute
+    position_range.write(vec4_positions.data());
+    index_range.write(indices.data());
 
-    gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    kernel.dispatchCompute(indices.size()); // <<< dispatch compute
 
-    std::vector<glm::vec3> positions;
-    positions.reserve(vec4_positions.size());
-    for (const auto& vec4_p : vec4_positions)
-        positions.emplace_back(vec4_p);
+    SECTION("Correctness")
+    {
+        std::vector<glm::vec3> positions;
+        positions.reserve(vec4_positions.size());
+        for (const auto& vec4_p : vec4_positions)
+            positions.emplace_back(vec4_p);
 
-    const auto expected_values = sequential_reduction(positions, indices);
+        auto sequential_reduction = [](std::vector<glm::vec3> position_buffer, std::vector<GLuint> index_buffer)
+        {
+            const auto index_buffer_copy = index_buffer;
 
-    // read positions
-    position_range.read(vec4_positions.data());
-    REQUIRE(positions.size() == vec4_positions.size());
-    for (int i = 0; i < vec4_positions.size(); i++)
-        positions[i] = vec4_positions[i];
+            unsigned int index_acc = 0;
+            for (auto& index : index_buffer)
+            {
+                index_acc += index;
+                index = index_acc;
+            }
 
-    // read indices
-    index_range.read(indices.data());
+            for (int i = 0; i < position_buffer.size(); i++)
+            {
+                const bool valid = index_buffer_copy[i];
+                if (valid)
+                    position_buffer[index_buffer[i] - 1] = position_buffer[i];
+            }
 
-    INFO("positions.size() = " << positions.size());
-    const auto& expected_positions = expected_values.first;
-    INFO("expected_positions.size() = " << expected_positions.size());
-    CHECK(positions == expected_positions);
+            position_buffer.resize(index_buffer.back());
+            return std::make_pair(position_buffer, index_buffer);
+        };
 
-    INFO("indices.size() = " << indices.size());
-    const auto& expected_indices = expected_values.second;
-    INFO("expected_indices.size() = " << expected_indices.size());
-    CHECK(indices == expected_indices);
+        const auto expected_values = sequential_reduction(positions, indices);
+
+        // read indices
+        index_range.read(indices.data());
+
+        // check
+        const auto& expected_indices = expected_values.second;
+
+        REQUIRE(indices == expected_indices);
+
+        INFO("Reduced:")
+        CAPTURE(indices, indices.back());
+
+        REQUIRE(indices.back() <= indices.size());
+
+        // read positions
+        position_range.read(vec4_positions.data());
+
+        // transform into vec3
+        positions.resize(indices.back());
+        for (int i = 0; i < positions.size(); i++)
+            positions[i] = vec4_positions[i];
+
+        // check
+        const auto& expected_positions = expected_values.first;
+
+        CAPTURE(vec4_positions, positions.size(), expected_positions.size());
+        REQUIRE(positions == expected_positions);
+    }
+
+    SECTION("Determinism")
+    {
+        // reference values
+        std::vector<glm::vec4> reference_positions;
+        reference_positions.resize(vec4_positions.size());
+        position_range.read(reference_positions.data());
+
+        std::vector<GLuint> reference_indices;
+        reference_indices.resize(indices.size());
+        index_range.read(reference_indices.data());
+
+        // duplicate value storage
+        std::vector<glm::vec4> duplicate_positions;
+        duplicate_positions.resize(reference_positions.size());
+
+        std::vector<GLuint> duplicate_indices;
+        duplicate_indices.resize(reference_indices.size());
+
+        constexpr std::size_t num_runs = 8;
+        for (std::size_t i = 0; i < num_runs; i++)
+        {
+            INFO("repetition num.: " << i);
+
+            position_range.write(vec4_positions.data());
+            index_range.write(indices.data());
+
+            kernel.dispatchCompute(reference_positions.size());
+
+            position_range.read(duplicate_positions.data());
+            index_range.read(duplicate_indices.data());
+
+            CHECK(duplicate_positions == reference_positions);
+        }
+    }
 }

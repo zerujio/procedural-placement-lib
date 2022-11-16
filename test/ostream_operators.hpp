@@ -10,14 +10,14 @@ template<auto L, typename T, auto Q>
 auto operator<< (std::ostream& out, glm::vec<L, T, Q> v) -> std::ostream&
 {
     constexpr auto sep = ", ";
-    out << "{" << v.x << sep << v.y;
+    out << "(" << v.x << sep << v.y;
     if constexpr (L > 2)
     {
         out << sep << v.z;
         if constexpr (L > 3)
             out << sep << v.w;
     }
-    return out << "}";
+    return out << ")";
 }
 
 template<class T>
@@ -27,8 +27,10 @@ auto operator<< (std::ostream& out, std::vector<T> vector) ->std::ostream&
         return out << "[]";
 
     out << "[";
-    for (const T& x : vector)
-        out << x << ", ";
+    auto it = vector.cbegin();
+    out << *it++;
+    while (it != vector.cend())
+        out << ", " << *it++;
     return out << "]";
 }
 

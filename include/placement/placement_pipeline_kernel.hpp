@@ -20,29 +20,32 @@ namespace placement {
     public:
         using ComputeKernel::ComputeKernel;
 
-        /// Default shader storage block binding index
-        static constexpr glutils::GLuint default_position_ssb_binding = 0;
-        static constexpr glutils::GLuint default_index_ssb_binding = 1;
-
-        /// Access the shader storage block for the buffers.
+        /// get the position buffer's binding index (used in glBindBufferBase and glBindBufferRange)
         [[nodiscard]]
-        auto getPositionShaderStorageBlock() const -> ShaderStorageBlock {return {*this, m_position_ssb};}
+        auto getPositionBufferBindingIndex() const -> glutils::GLuint { return m_position_ssb.getBindingIndex(); }
 
+        /// get the index buffer's binding index (used in glBindBufferBase and glBindBufferRange)
         [[nodiscard]]
-        auto getIndexShaderStorageBlock() const -> ShaderStorageBlock {return {*this, m_index_ssb};}
+        auto getIndexBufferBindingIndex() const -> glutils::GLuint { return m_index_ssb.getBindingIndex(); }
+
+        /// Set the position buffer's binding index, which must be different to the index buffer.
+        void setPositionBufferBindingIndex(glutils::GLuint new_index) {m_position_ssb.setBindingIndex(*this, new_index); }
+
+        /// set the index buffer's binding index, which must be different from the position buffer's index.
+        void setIndexBufferBindingIndex(glutils::GLuint new_index) {m_index_ssb.setBindingIndex(*this, new_index);}
 
         /// Get the required size of a shader storage block for a given number of elements.
         [[nodiscard]]
-        static auto getPositionBufferRequiredSize(glutils::GLsizeiptr element_count) -> glutils::GLsizeiptr
+        static auto calculatePositionBufferSize(std::size_t element_count) -> std::size_t
         {
             // alignment of vec3 is that of vec4 in shader storage blocks
-            return element_count * static_cast<glutils::GLsizeiptr>(sizeof(glm::vec4));
+            return element_count * sizeof(glm::vec4);
         }
 
         [[nodiscard]]
-        static auto getIndexBufferRequiredSize(glutils::GLsizeiptr element_count) -> glutils::GLsizeiptr
+        static auto calculateIndexBufferSize(std::size_t element_count) -> std::size_t
         {
-            return element_count * static_cast<glutils::GLsizeiptr>(sizeof(glutils::GLuint));
+            return element_count * sizeof(glutils::GLuint);
         }
 
     protected:
@@ -50,10 +53,8 @@ namespace placement {
         static constexpr auto s_index_ssb_name = "IndexBuffer";
 
     private:
-        using ShaderStorageBlockIndex = ProgramResourceIndex<glutils::Program::Interface::shader_storage_block>;
-
-        ShaderStorageBlockIndex m_position_ssb {*this, s_position_ssb_name};
-        ShaderStorageBlockIndex m_index_ssb {*this, s_index_ssb_name};
+        ShaderStorageBlock m_position_ssb {*this, s_position_ssb_name};
+        ShaderStorageBlock m_index_ssb {*this, s_index_ssb_name};
     };
 
 } // placement
