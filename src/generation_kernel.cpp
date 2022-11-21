@@ -46,23 +46,20 @@ namespace placement {
     };
 
     static const Definition height_tex_def {
-        .layout{.binding=GenerationKernel::s_default_heightmap_tex_unit},
         .storage = StorageQualifier::uniform,
         .type = Type::sampler2D,
         .name = "u_heightmap"
     };
 
     static const Definition density_tex_def {
-        .layout{.binding=GenerationKernel::s_default_densitymap_tex_unit},
         .storage = StorageQualifier::uniform,
         .type = Type::sampler2D,
         .name = "u_densitymap"
     };
 
-    const std::string GenerationKernel::s_source_string {
-        (std::ostringstream()
-                << "#version 450 core\n"
-                << "layout(local_size_x = " << GenerationKernel::s_work_group_size.x
+    const std::string GenerationKernel::s_source_string = (std::ostringstream()
+        << "#version 450 core\n"
+        << "layout(local_size_x = " << GenerationKernel::s_work_group_size.x
                 << ", local_size_y = " << GenerationKernel::s_work_group_size.y << ") in;\n"
         << lower_bound_def << "\n"
         << upper_bound_def << "\n"
@@ -72,19 +69,16 @@ namespace placement {
         << height_tex_def << "\n"
         << density_tex_def << "\n"
         << R"glsl(
-
-layout(std430, binding=)glsl" << PlacementPipelineKernel::default_position_ssb_binding << R"glsl()
-restrict writeonly
-buffer )glsl" << PlacementPipelineKernel::s_position_ssb_name << R"glsl(
+struct Candidate
 {
-    vec3 position_buffer[][gl_WorkGroupSize.x][gl_WorkGroupSize.y];
+    vec3 position;
+    bool valid;
 };
 
-layout(std430, binding=)glsl" << PlacementPipelineKernel::default_index_ssb_binding << R"glsl()
-restrict writeonly
-buffer )glsl" << PlacementPipelineKernel::s_index_ssb_name << R"glsl(
+layout(std430, binding = 0) restrict writeonly
+buffer )glsl" << PlacementPipelineKernel::s_candidate_ssb_name << R"glsl(
 {
-    uint index_buffer[][gl_WorkGroupSize.x][gl_WorkGroupSize.y];
+    Candidate candidate_array[][gl_WorkGroupSize.x][gl_WorkGroupSize.y];
 };
 
 const float dithering_matrix[gl_WorkGroupSize.x][gl_WorkGroupSize.y] =
@@ -116,20 +110,18 @@ void main()
                         && density_value > threshold_value;
 
     // write results
-    position_buffer[group_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = position;
-    index_buffer[group_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = uint(is_valid);
+    candidate_array[group_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = Candidate(position, is_valid);
 }
-)glsl").str()
-    };
+)glsl").str();
 
     GenerationKernel::GenerationKernel() :
             PlacementPipelineKernel(s_source_string),
-            m_heightmap_loc(*this, height_tex_def.name),
-            m_densitymap_loc(*this, density_tex_def.name)
+            m_heightmap(*this, height_tex_def.name),
+            m_densitymap(*this, density_tex_def.name)
     {}
 
-    std::size_t GenerationKernel::setArgs(const glm::vec3 &world_scale, float footprint, glm::vec2 lower_bound,
-                                   glm::vec2 upper_bound)
+    glutils::GLsizeiptr GenerationKernel::setArgs(const glm::vec3 &world_scale, float footprint, glm::vec2 lower_bound,
+                                                  glm::vec2 upper_bound)
     {
         // footprint
         {
@@ -157,9 +149,8 @@ void main()
 
     void GenerationKernel::dispatchCompute() const
     {
-        useProgram();
+        m_useProgram();
         gl.DispatchCompute(m_num_work_groups.x, m_num_work_groups.y, 1);
-        m_ensureOutputVisibility();
     }
 
     auto GenerationKernel::m_calculateNumWorkGroups(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound)

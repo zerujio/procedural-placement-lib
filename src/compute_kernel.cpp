@@ -4,6 +4,8 @@
 #include "glutils/error.hpp"
 #include "gl_context.hpp"
 
+#include "glm/gtc/type_ptr.hpp"
+
 namespace placement {
     ComputeKernel::ComputeKernel(unsigned int count, const char **source_strings)
     {
@@ -22,7 +24,7 @@ namespace placement {
         m_program->detachShader(*shader);
     }
 
-    void ComputeKernel::useProgram() const
+    void ComputeKernel::m_useProgram() const
     {
         gl.UseProgram(m_program->getName());
     }
@@ -38,7 +40,10 @@ namespace placement {
 
     ComputeKernel::UniformLocation::UniformLocation(const ComputeKernel &kernel, const char *uniform_name) :
         m_location(kernel.m_program->getResourceLocation(glutils::Program::Interface::uniform, uniform_name))
-    {}
+    {
+        if (m_location < 0)
+            throw std::runtime_error("failed to retrieve uniform location");
+    }
 
     auto ComputeKernel::InterfaceBlockBase::m_queryBindingIndex(const ComputeKernel& kernel,
                                                                 ComputeKernel::InterfaceBlockBase::Type type)
@@ -50,14 +55,17 @@ namespace placement {
         return m_binding_index;
     }
 
-    void ComputeKernel::TextureSampler::setTextureUnit(const ComputeKernel& kernel, glutils::GLuint texture_unit) const
+    void ComputeKernel::TextureSampler::setTextureUnit(const ComputeKernel& kernel, glutils::GLuint texture_unit)
     {
-        kernel.setUniform<GLint>(m_location, texture_unit);
+        kernel.setUniform(m_location, static_cast<GLint>(texture_unit));
+        m_tex_unit = texture_unit;
     }
 
     auto ComputeKernel::TextureSampler::queryTextureUnit(const placement::ComputeKernel &kernel) -> glutils::GLuint
     {
-        gl.GetUniformuiv(kernel.m_program->getName(), m_location, &m_tex_unit);
+        glm::uvec2 values {0};  // querying a sampler returns an uvec2 for some reason
+        gl.GetUniformuiv(kernel.m_program->getName(), m_location.get(), glm::value_ptr(values));
+        m_tex_unit = values.x;
         return m_tex_unit;
     }
 } // placement

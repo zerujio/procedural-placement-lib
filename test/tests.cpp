@@ -10,6 +10,7 @@
 #include <memory>
 #include <ostream>
 #include <algorithm>
+#include <unordered_set>
 
 // included here to make it available to catch.hpp
 #include "ostream_operators.hpp"
@@ -116,13 +117,16 @@ TEST_CASE("PlacementPipeline", "[placement][pipeline]")
 
     SECTION("Placement with < 0 area should return an empty vector")
     {
-        auto points = pipeline.computePlacement(1.0f, {0.0f, 0.0f}, {-1.0f, -1.0f});
+        pipeline.computePlacement(1.0f, {0.0f, 0.0f}, {-1.0f, -1.0f});
+        auto points = pipeline.copyResultsToCPU();
         CHECK(points.empty());
 
-        points = pipeline.computePlacement(1.0f, {0.0f, 0.0f}, {10.0f, -1.0f});
+        pipeline.computePlacement(1.0f, {0.0f, 0.0f}, {10.0f, -1.0f});
+        points = pipeline.copyResultsToCPU();
         CHECK(points.empty());
 
-        points = pipeline.computePlacement(1.0f, {0.0f, 0.0f}, {-1.0f, 10.0f});
+        pipeline.computePlacement(1.0f, {0.0f, 0.0f}, {-1.0f, 10.0f});
+        points = pipeline.copyResultsToCPU();
         CHECK(points.empty());
     }
 
@@ -133,9 +137,11 @@ TEST_CASE("PlacementPipeline", "[placement][pipeline]")
         const auto& lower_bound = bounds.first;
         const auto& upper_bound = bounds.second;
 
-        const auto points = pipeline.computePlacement(0.5f, lower_bound, upper_bound);
+        pipeline.computePlacement(0.5f, lower_bound, upper_bound);
 
-        REQUIRE(points.size() == 1);
+        REQUIRE(pipeline.getResultsSize() == 1);
+
+        const auto points = pipeline.copyResultsToCPU();
 
         const auto& point = points.front();
         CHECK(point.x >= lower_bound.x);
@@ -144,17 +150,37 @@ TEST_CASE("PlacementPipeline", "[placement][pipeline]")
         CHECK(point.z < upper_bound.y);
     }
 
+    auto makePositionSet = [](const std::vector<glm::vec3>& positions)
+    {
+        auto compareVec3 = [](const glm::vec3& l, const glm::vec3& r)
+        {
+            return l.x < r.x && l.y < r.y && l.z < r.z;
+        };
+
+        std::set<glm::vec3, decltype(compareVec3)> set(compareVec3);
+
+        for (const auto& p : positions)
+            set.insert(p);
+
+        return set;
+    };
+
     SECTION("Determinism (trivial)")
     {
         pipeline.setWorldScale({1.0f, 1.0f, 1.0f});
 
-        const auto positions0 = pipeline.computePlacement(0.01f, glm::vec2(0.f), glm::vec2(1.f));
-        const auto positions1 = pipeline.computePlacement(0.01f, glm::vec2(0.f), glm::vec2(1.f));
+        pipeline.computePlacement(0.01f, glm::vec2(0.f), glm::vec2(1.f));
+        const auto positions0 = pipeline.copyResultsToCPU();
+        const auto position_set0 = makePositionSet(positions0);
+
+        pipeline.computePlacement(0.01f, glm::vec2(0.f), glm::vec2(1.f));
+        const auto positions1 = pipeline.copyResultsToCPU();
+        const auto position_set1 = makePositionSet(positions1);
 
         CHECK(!positions0.empty());
         CHECK(!positions1.empty());
         CHECK(positions0.size() == positions1.size());
-        CHECK(positions0 == positions1);
+        CHECK(position_set0 == position_set1);
     }
 
     const float footprint = GENERATE(take(3, random(0.01f, 0.1f)));
@@ -174,7 +200,8 @@ TEST_CASE("PlacementPipeline", "[placement][pipeline]")
 
     SECTION("Boundary and separation")
     {
-        auto points = pipeline.computePlacement(footprint, lower_bound, upper_bound);
+        pipeline.computePlacement(footprint, lower_bound, upper_bound);
+        const auto points = pipeline.copyResultsToCPU();
 
         REQUIRE(!points.empty());
 
@@ -196,44 +223,38 @@ TEST_CASE("PlacementPipeline", "[placement][pipeline]")
 
     SECTION("Determinism")
     {
-        const auto result0 = pipeline.computePlacement(footprint, lower_bound, upper_bound);
+        pipeline.computePlacement(footprint, lower_bound, upper_bound);
+        const auto result0 = pipeline.copyResultsToCPU();
         REQUIRE(!result0.empty());
 
-        const auto result1 = pipeline.computePlacement(footprint, lower_bound, upper_bound);
+        pipeline.computePlacement(footprint, lower_bound, upper_bound);
+        const auto result1 = pipeline.copyResultsToCPU();
         REQUIRE(!result1.empty());
 
-        REQUIRE(result0 == result1);
+        const auto position_set0 = makePositionSet(result0);
+        const auto position_set1 = makePositionSet(result1);
+        REQUIRE(position_set0 == position_set1);
 
-        const auto result2 = pipeline.computePlacement(footprint * 1.3f , lower_bound, upper_bound);
-
-        CHECK(result0 != result2);
+        pipeline.computePlacement(footprint * 1.3f , lower_bound, upper_bound);
+        const auto result2 = pipeline.copyResultsToCPU();
+        const auto position_set2 = makePositionSet(result2);
+        CHECK(position_set0 != position_set2);
     }
 
     const GLuint textures[] = {white_texture, black_texture};
     gl.DeleteTextures(2, &textures[0]);
 }
 
-TEMPLATE_TEST_CASE("Common PlacementPipelineKernel operations", "[kernel][pipeline]", GenerationKernel, ReductionKernel)
+TEMPLATE_TEST_CASE("Common PlacementPipelineKernel operations", "[kernel][pipeline]", GenerationKernel, IndexAssignmentKernel, IndexedCopyKernel)
 {
     TestType kernel;
-
-    SECTION("Default SSB binding points")
-    {
-        CHECK(kernel.getPositionShaderStorageBlock().getBindingIndex() == PlacementPipelineKernel::default_position_ssb_binding);
-        CHECK(kernel.getIndexShaderStorageBlock().getBindingIndex() == PlacementPipelineKernel::default_index_ssb_binding);
-    }
 
     SECTION("Binding point operations")
     {
         const GLuint binding_index = GENERATE(range(1, 8));
 
-        auto ssb = kernel.getPositionShaderStorageBlock();
-        ssb.setBindingIndex(binding_index);
-        CHECK(ssb.getBindingIndex() == binding_index);
-
-        ssb = kernel.getIndexShaderStorageBlock();
-        ssb.setBindingIndex(binding_index);
-        CHECK(ssb.getBindingIndex() == binding_index);
+        kernel.setCandidateBufferBindingIndex(binding_index);
+        CHECK(kernel.getCandidateBufferBindingIndex() == binding_index);
     }
 }
 
@@ -241,20 +262,16 @@ TEST_CASE("GenerationKernel", "[generation][kernel][pipeline]")
 {
     GenerationKernel kernel;
 
-    SECTION("default value")
-    {
-        CHECK(kernel.getHeightmapSampler().getTextureUnit() == GenerationKernel::s_default_heightmap_tex_unit);
-        CHECK(kernel.getDensitymapSampler().getTextureUnit() == GenerationKernel::s_default_densitymap_tex_unit);
-    }
-
     SECTION("set texture unit")
     {
-        auto getSampler = GENERATE(&GenerationKernel::getHeightmapSampler, &GenerationKernel::getDensitymapSampler);
-        const auto sampler = (kernel.*getSampler)();
+        for (unsigned int i = 0; i < 8; i++)
+        {
+            kernel.setDensityTextureUnit(i);
+            CHECK(kernel.getDensitytextureUnit() == i);
 
-        const auto texture_unit = GENERATE(1, 3, 0, 6, 4);
-        sampler.setTextureUnit(texture_unit);
-        CHECK(sampler.getTextureUnit() == texture_unit);
+            kernel.setHeightTextureUnit(i);
+            CHECK(kernel.getHeightTextureUnit() == i);
+        }
     }
 
     SECTION("correctness")
@@ -276,51 +293,41 @@ TEST_CASE("GenerationKernel", "[generation][kernel][pipeline]")
 
         const auto white_texture = loadTexture("assets/white.png");
         const auto black_texture = loadTexture("assets/black.png");
-        gl.BindTextureUnit(GenerationKernel::s_default_heightmap_tex_unit, black_texture);
-        gl.BindTextureUnit(GenerationKernel::s_default_densitymap_tex_unit, white_texture);
+
+        kernel.setHeightTextureUnit(0);
+        gl.BindTextureUnit(kernel.getHeightTextureUnit(), black_texture);
+
+        kernel.setDensityTextureUnit(1);
+        gl.BindTextureUnit(kernel.getDensitytextureUnit(), white_texture);
 
         const auto candidate_count = kernel.setArgs(world_scale, footprint, lower_bound, upper_bound);
 
         REQUIRE(candidate_count > 0);
 
         glutils::Guard<glutils::Buffer> buffer;
-        const glutils::BufferRange position_buffer_range {
-            *buffer,
-            0,
-            static_cast<GLsizeiptr>(GenerationKernel::calculatePositionBufferSize(candidate_count))
-        };
-        const glutils::BufferRange index_buffer_range {
-            *buffer,
-            position_buffer_range.size,
-            static_cast<GLsizeiptr>(GenerationKernel::calculateIndexBufferSize(candidate_count))
-        };
+        const auto buffer_size = GenerationKernel::calculateCandidateBufferSize(candidate_count);
+        buffer->allocateImmutable(buffer_size, glutils::Buffer::StorageFlags::map_read, nullptr);
 
-        buffer->allocateImmutable(position_buffer_range.size + index_buffer_range.size,
-                                  glutils::Buffer::StorageFlags::map_read,
-                                  nullptr);
-
-        position_buffer_range.bindRange(glutils::Buffer::IndexedTarget::shader_storage,
-                                        GenerationKernel::default_position_ssb_binding);
-        index_buffer_range.bindRange(glutils::Buffer::IndexedTarget::shader_storage,
-                                     GenerationKernel::default_index_ssb_binding);
+        buffer->bindBase(glutils::Buffer::IndexedTarget::shader_storage, kernel.getCandidateBufferBindingIndex());
 
         kernel.dispatchCompute(); // << execute compute kernel
 
         // read results
-        std::vector<glm::vec4> positions;
-        positions.resize(candidate_count);
-        position_buffer_range.read(positions.data());
-
-        std::vector<GLuint> indices;
-        indices.resize(candidate_count);
-        index_buffer_range.read(indices.data());
+        struct Candidate
+        {
+            glm::vec3 position;
+            unsigned int valid;
+        };
+        std::vector<Candidate> candidates;
+        candidates.resize(candidate_count);
+        buffer->read(0, buffer_size, candidates.data());
 
         SECTION("boundaries")
         {
             for (int i = 0; i < candidate_count; i++)
             {
-                const glm::vec3 candidate_position = positions[i];
-                const GLuint candidate_index = indices[i];
+                const glm::vec3 candidate_position = candidates[i].position;
+                const GLuint candidate_index = candidates[i].valid;
                 INFO("Candidate: position = " << candidate_position << ", index = " << candidate_index);
 
                 const glm::vec2 position2d {candidate_position.x, candidate_position.z};
@@ -348,26 +355,45 @@ TEST_CASE("GenerationKernel", "[generation][kernel][pipeline]")
                 for (int j = 0; j < i; j++)
                 {
                     INFO("j = " << j);
-                    CHECK(glm::length(positions[i] - positions[j]) >= Approx(2 * footprint));
+                    CHECK(glm::length(candidates[i].position - candidates[j].position) >= Approx(2 * footprint));
                 }
             }
         }
 
         SECTION("determinism")
         {
-            std::vector<glm::vec4> positions_duplicate = positions;
-            positions_duplicate.resize(candidate_count);
-
-            std::vector<GLuint> indices_duplicate;
-            indices_duplicate.resize(candidate_count);
+            auto candidates_duplicate = candidates;
 
             kernel.dispatchCompute();
 
-            position_buffer_range.read(positions_duplicate.data());
-            index_buffer_range.read(indices_duplicate.data());
+            buffer->read(0, buffer_size, candidates_duplicate.data());
 
-            CHECK(positions == positions_duplicate);
-            CHECK(indices == indices_duplicate);
+            std::vector<glm::vec3> positions;
+            std::vector<unsigned int> validity;
+
+            positions.reserve(candidate_count);
+            validity.reserve(candidate_count);
+
+            for (auto& c : candidates)
+            {
+                positions.emplace_back(c.position);
+                validity.emplace_back(c.valid);
+            }
+
+            std::vector<glm::vec3> positions_dup;
+            std::vector<unsigned int> validity_dup;
+
+            positions_dup.reserve(candidate_count);
+            validity_dup.reserve(candidate_count);
+
+            for (auto& c : candidates_duplicate)
+            {
+                positions_dup.emplace_back(c.position);
+                validity_dup.emplace_back(c.valid);
+            }
+
+            CHECK(positions == positions_dup);
+            CHECK(validity == validity_dup);
         }
 
         const GLuint textures[] = {white_texture, black_texture};
@@ -375,7 +401,126 @@ TEST_CASE("GenerationKernel", "[generation][kernel][pipeline]")
     }
 }
 
+TEST_CASE("IndexAssignmentKernel", "[reduction][kernel]")
+{
+    using Indices = std::vector<unsigned int>;
+    auto indices = GENERATE(Indices{0}, Indices{1},
+                            Indices{0, 0}, Indices{0, 1}, Indices{1, 0}, Indices{1, 1},
+                            take(6, chunk(10, random(0u, 1u))),
+                            take(5, chunk(20, random(0u, 1u))),
+                            take(3, chunk(64, random(0u, 1u))),
+                            take(3, chunk(333, random(0u, 1u))),
+                            take(3, chunk(1024, random(0u, 1u))),
+                            take(3, chunk(15000, random(0u, 1u))));
 
+    struct Candidate
+    {
+        glm::vec3 position;
+        unsigned int valid;
+    };
+
+    std::vector<Candidate> candidates;
+    candidates.reserve(indices.size());
+    for (auto i : indices)
+        candidates.emplace_back(Candidate{glm::vec3(0.0f), i});
+
+    const unsigned int expected_sum = std::count(indices.cbegin(), indices.cend(), 1u);
+
+    using namespace glutils;
+
+    Guard<Buffer> buffer;
+    const BufferRange candidate_range {buffer.getHandle(),
+                                       0,
+                                       IndexAssignmentKernel::calculateCandidateBufferSize(candidates.size())};
+    const BufferRange index_range {buffer.getHandle(),
+                                   candidate_range.size,
+                                   IndexAssignmentKernel::calculateIndexBufferSize(candidates.size())};
+    const BufferRange index_sum_range {buffer.getHandle(), index_range.offset, sizeof(GLuint)};
+    const BufferRange index_array_range {buffer.getHandle(),
+                                         index_range.offset + index_sum_range.size,
+                                         index_range.size - index_sum_range.size};
+    const GLsizeiptr buffer_size = candidate_range.size + index_sum_range.size + index_array_range.size;
+
+    buffer->allocateImmutable(buffer_size, Buffer::StorageFlags::dynamic_storage);
+
+    GLuint computed_sum = 0;
+    index_sum_range.write(&computed_sum); // initialize sum
+    candidate_range.write(candidates.data()); // initialize candidates
+
+    IndexAssignmentKernel kernel;
+    kernel.setCandidateBufferBindingIndex(0);
+    kernel.setIndexBufferBindingIndex(1);
+
+    index_range.bindRange(Buffer::IndexedTarget::shader_storage, kernel.getIndexBufferBindingIndex());
+    candidate_range.bindRange(Buffer::IndexedTarget::shader_storage, kernel.getCandidateBufferBindingIndex());
+
+    kernel.dispatchCompute(candidates.size());
+
+    gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+
+    index_sum_range.read(&computed_sum);
+
+    std::vector<int> computed_indices;
+    computed_indices.resize(indices.size());
+    index_array_range.read(computed_indices.data());
+
+    SECTION("correctness")
+    {
+        CAPTURE(indices);
+        CAPTURE(computed_indices);
+
+        CHECK(computed_sum == expected_sum);
+
+        const auto expected_invalid = indices.size() - expected_sum;
+
+        std::map<int, std::size_t> count;
+
+        for (auto i : computed_indices)
+            count[i]++;
+
+        CHECK(count[-1u] == expected_invalid);
+
+        std::vector<std::pair<int, std::size_t>> non_unique;
+        for (const auto& p : count)
+            if (p.first != -1u && p.second > 1)
+                non_unique.emplace_back(p);
+
+        CAPTURE(non_unique);
+        CHECK(non_unique.empty());
+    }
+
+    SECTION("determinism")
+    {
+        GLuint second_computed_sum = 0;
+        index_sum_range.write(&second_computed_sum);
+        kernel.dispatchCompute(candidates.size());
+
+        std::set<int> first_computed_set;
+        for (int i : computed_indices)
+            if (i != -1)
+                first_computed_set.insert(i);
+
+        gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+
+        index_sum_range.read(&second_computed_sum);
+
+        CAPTURE(indices);
+        CHECK(computed_sum == second_computed_sum);
+
+        std::vector<int> second_computed_indices;
+        second_computed_indices.resize(indices.size());
+        index_array_range.read(second_computed_indices.data());
+
+        std::set<int> second_computed_set;
+        for (int i : second_computed_indices)
+            if (i != -1)
+                second_computed_set.insert(i);
+
+        CHECK(first_computed_set == second_computed_set);
+    }
+}
+
+/*
 TEST_CASE("ReductionKernel", "[reduction][kernel][pipeline]")
 {
     ReductionKernel kernel;
@@ -515,3 +660,4 @@ TEST_CASE("ReductionKernel", "[reduction][kernel][pipeline]")
         }
     }
 }
+ */

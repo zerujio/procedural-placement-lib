@@ -5,167 +5,101 @@
 
 #include <sstream>
 
-/*
- *  TODO: solve the inter-workgroup ordering problem.
- *
- *  Possible solution 1:
- *  Extract the loop from the shader into multiple compute dispatches. i.e.:
- *
- *      for (std::size_t group_size = 1; group_size < candidate_count; group_size <<= 1)
- *      {
- *          setUniform(group_size_uniform_location, group_size);
- *          gl.DispatchCompute(...);
- *          m_ensureOutputVisibility();
- *      }
- *
- * This is the simplest solution, but may incur in performance penalties.
- *
- * Possible solution 2:
- * Only perform reduction within a single work group, move final copy to separate shader. To reduce more items, dispatch
- * multiple times, with each dispatch covering more per work group.
- *
- *      uniform uint base_group_size; // 1, 2, 4, 8, 16, ...
- *      shared uint index_sum[2 * gl_WorkGroupSize.x];
- *
- *      uint localToGlobalIndex(uint local_index) { return gl_WorkGroupID.x * gl_WorkGroupSize.x + local_index; }
- *      uint groupOffsetFromGlobalIndex(uint global_group_index) { return global_group_index * base_group_size; }
- *      uint groupOffsetFromLocalIndex(uint local_index) { return groupOffsetFromGlobalIndex(localToGlobalIndex(local_index)); }
- *
- *      void addToIndexBuffer(uint local_group_index, int element_index, value)
- *      {
- *          index_buffer[groupOffsetFromLocalIndex(local_group_index) + element_index] += value;
- *      }
- *
- *      uint readFromIndexBuffer(uint local_group_index, int element_index)
- *      {
- *          return index_buffer[groupOffsetFromLocalIndex(local_group_index) + element_index];
- *      }
- *
- *      void main()
- *      {
- *          // se copia el último elemento de cada batch/grupo a memoria local compartida
- *          index_sum[gl_LocalInvocationIndex.x] = readFromIndexBuffer(gl_LocalInvocationID.x + 1, - 1);
- *          index_sum [gl_LocalInvocationIndex.x * 2] = readFromIndexBuffer(gl_LocalInvocationID.x * 2 + 1, - 1);
- *
- *          memoryBarrierShared();
- *          barrier();
- *
- *          // el algoritmo de reducción clásico, pero solo sobre los elementos del work group
- *          for (uint local_group_size = 1; local_group_size < gl_WorkGroupSize.x; local_group_size <<= 1)
- *          {
- *              const uint write_index = ...;
- *              const uint read_index = ...;
- *
- *              index_sum[write_index] += index_sum[read_index];
- *
- *              memoryBarrierShared();
- *              barrier();
- *          }
- *
- *          // se suma el offset correspondiente al grupo completo
- *          for (uint local_group_index = gl_LocalInvocationID.x;
- *              factor <= gl_LocalInvocationID.x * 2;
- *              local_group_index *= 2)
- *          {
- *              for (uint i = 0; i < base_group_size; i++)
- *              {
- *                  addToIndexBuffer(local_group_index, i, index_sum[local_group_index]);
- *              }
- *          }
- *      }
- *
- * Bonus: this allows the use of shared memory!.
- */
-
 namespace placement {
 
-     const std::string ReductionKernel::s_source_string = (std::stringstream() << R"glsl(
-#version 430 core
+     const std::string IndexAssignmentKernel::s_source_string = (std::stringstream() << R"glsl(
+#version 450 core
 
-layout(local_size_x = )glsl" << ReductionKernel::s_work_group_size << R"glsl() in;
-
-layout(std430, binding=)glsl" << ReductionKernel::default_position_ssb_binding << R"glsl()
-restrict coherent
-buffer )glsl" << ReductionKernel::s_position_ssb_name << R"glsl(
-{
-    vec3 position_buffer[];
-};
-
-layout(std430, binding=)glsl" << ReductionKernel::default_index_ssb_binding << R"glsl()
-restrict coherent
-buffer )glsl" << ReductionKernel::s_index_ssb_name << R"glsl(
-{
-    uint index_buffer[];
-};
+layout(local_size_x = )glsl" << IndexAssignmentKernel::s_work_group_size << R"glsl() in;
 
 struct Candidate
 {
     vec3 position;
-    uint index;
+    bool valid;
 };
 
-Candidate readCandidate(uint index)
+layout(std430, binding = 0) restrict readonly
+buffer )glsl" << ReductionKernel::s_candidate_ssb_name << R"glsl(
 {
-    if (index < position_buffer.length())
-        return Candidate(position_buffer[index], index_buffer[index]);
-    else
-        return Candidate(vec3(0.0f), 0);
+    Candidate candidate_array[];
+};
+
+layout(std430, binding = 1) restrict
+buffer )glsl" << ReductionKernel::s_index_ssb_name << R"glsl(
+{
+    uint index_sum;
+    uint index_array[];
+};
+
+shared uint index_cache[2 * gl_WorkGroupSize.x];
+shared uint index_offset;
+
+// read validity flag from candidate with bounds checking
+uint readValidity(uint index)
+{
+    return index < candidate_array.length() ? uint(candidate_array[index].valid) : 0;
+}
+
+// write index to index buffer with bounds checking
+void writeIndex(uint array_index, uint value)
+{
+    if (array_index < index_array.length())
+        index_array[array_index] = value;
 }
 
 void main()
 {
-    const uint invocation_index = gl_GlobalInvocationID.x * 2;
-    const Candidate c0 = readCandidate(invocation_index);
-    const Candidate c1 = readCandidate(invocation_index + 1);
+    const uint local_array_index0 = gl_LocalInvocationID.x;
+    const uint local_array_index1 = local_array_index0 + gl_WorkGroupSize.x;
 
-    for (uint group_size = 1; group_size < index_buffer.length(); group_size <<= 1)
+    const uint global_array_index0 = gl_WorkGroupID.x * 2 * gl_WorkGroupSize.x + local_array_index0;
+    const uint global_array_index1 = global_array_index0 + gl_WorkGroupSize.x;
+
+    const uint valid0 = readValidity(global_array_index0);
+    const uint valid1 = readValidity(global_array_index1);
+
+    index_cache[local_array_index0] = valid0;
+    index_cache[local_array_index1] = valid1;
+
+    barrier();
+    memoryBarrierShared();
+
+    for (uint group_size = 1; group_size < 2 * gl_WorkGroupSize.x; group_size <<= 1)
     {
-        barrier();
-        memoryBarrierBuffer();
-
-        const uint group_index = (gl_GlobalInvocationID.x / group_size) * 2 + 1;
+        const uint group_index = (gl_LocalInvocationID.x / group_size) * 2 + 1;
         const uint base_index = group_index * group_size;
-        const uint write_index = base_index + gl_GlobalInvocationID.x % group_size;
+        const uint write_index = base_index + gl_LocalInvocationID.x % group_size;
         const uint read_index = base_index - 1;
 
-        if (write_index < index_buffer.length())
-            // no need to check read_index. Per its definition, it is bound by 0 < read_index < write_index.
-            index_buffer[write_index] += index_buffer[read_index];
+        index_cache[write_index] += index_cache[read_index];
+
+        barrier();
+        memoryBarrierShared();
     }
 
-    memoryBarrierBuffer();
+    if (gl_LocalInvocationIndex.x == gl_WorkGroupSize.x - 1)
+        index_offset = atomicAdd(index_sum, index_cache[2 * gl_WorkGroupSize.x - 1]);
+
     barrier();
+    memoryBarrierShared();
 
-    if (c0.index == 1)
-    {
-        const uint reduced_index = index_buffer[invocation_index] - 1;
-        position_buffer[reduced_index] = c0.position;
-    }
+    writeIndex(global_array_index0, (index_offset + index_cache[local_array_index0]) * valid0 - 1);
+    writeIndex(global_array_index1, (index_offset + index_cache[local_array_index1]) * valid1 - 1);
 
-    if (c1.index == 1)
-    {
-        const uint reduced_index = index_buffer[invocation_index + 1] - 1;
-        position_buffer[reduced_index] = c1.position;
-    }
 }
 )glsl").str();
 
     using namespace glutils;
 
-    ReductionKernel::ReductionKernel() : PlacementPipelineKernel(s_source_string) {}
+    IndexAssignmentKernel::IndexAssignmentKernel() : ReductionKernel(s_source_string) {}
 
-    auto ReductionKernel::dispatchCompute(std::size_t candidate_count) const -> std::size_t
+    void IndexAssignmentKernel::dispatchCompute(std::size_t candidate_count) const
     {
-        if (candidate_count == 0)
-            return 0;
-
-        useProgram();
+        m_useProgram();
         gl.DispatchCompute(m_calculateNumWorkGroups(candidate_count), 1, 1);
-        m_ensureOutputVisibility();
-        return (candidate_count - 1) * sizeof(GLuint);
     }
 
-    auto ReductionKernel::m_calculateNumWorkGroups(const std::size_t element_count) -> std::size_t
+    auto IndexAssignmentKernel::m_calculateNumWorkGroups(const std::size_t element_count) -> std::size_t
     {
         // every invocation reduces two elements
         constexpr auto elements_per_work_group = 2 * s_work_group_size;
@@ -173,17 +107,55 @@ void main()
         return element_count / elements_per_work_group + (element_count % elements_per_work_group != 0);
     }
 
-    void ReductionKernel::setAuxiliaryBufferBindingIndices(glm::uvec2 indices)
-    {
-        m_forward_kernel.setInputBindingIndex(indices.x);
-        m_backward_kernel.setInputBindingIndex(indices.x);
-        m_forward_kernel.setOutputBindingIndex(indices.y);
-        m_backward_kernel.setOutputBindingIndex(indices.y);
-    }
+    // IndexedCopyKernel
 
-    auto ReductionKernel::getAuxiliaryBufferBindingIndices() const -> glm::uvec2
-    {
-        return {m_forward_kernel.getInputBindingIndex(), m_backward_kernel.getOutputBindingIndex()};
-    }
+    const std::string IndexedCopyKernel::s_source_string = (std::stringstream() << R"glsl(
+#version 430 core
 
+layout(local_size_x=)glsl" << IndexedCopyKernel::s_workgroup_size << R"glsl() in;
+
+struct Candidate
+{
+    vec3 position;
+    bool valid;
+};
+
+layout(std430, binding = 0) restrict readonly
+buffer )glsl" << IndexedCopyKernel::s_candidate_ssb_name << R"glsl(
+{
+    Candidate candidate_array[];
+};
+
+layout(std430, binding = 1) restrict readonly
+buffer )glsl" << IndexedCopyKernel::s_index_ssb_name << R"glsl(
+{
+    uint index_sum;
+    uint index_array[];
+};
+
+layout(std430, binding = 1) restrict writeonly
+buffer )glsl" << IndexedCopyKernel::s_position_ssb_name << R"glsl(
+{
+    vec3 position_array[];
+};
+
+void main()
+{
+    if (gl_GlobalInvocationID.x < candidate_array.length())
+    {
+        const uint reduced_index = index_array[gl_GlobalInvocationID.x];
+        if (reduced_index < index_sum);
+            position_array[reduced_index] = candidate_array[gl_GlobalInvocationID.x].position;
+    }
+}
+)glsl").str();
+
+    IndexedCopyKernel::IndexedCopyKernel() : ReductionKernel(s_source_string) {}
+
+    void IndexedCopyKernel::dispatchCompute(std::size_t candidate_count) const
+    {
+        const GLuint num_workgroups = candidate_count / s_workgroup_size + (candidate_count % s_workgroup_size != 0);
+        m_useProgram();
+        gl.DispatchCompute(num_workgroups, 1, 1);
+    }
 } // placement

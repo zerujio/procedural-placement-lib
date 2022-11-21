@@ -1,7 +1,7 @@
 #ifndef PROCEDURALPLACEMENTLIB_REDUCTION_KERNEL_HPP
 #define PROCEDURALPLACEMENTLIB_REDUCTION_KERNEL_HPP
 
-#include "compute_kernel.hpp"
+#include "placement_pipeline_kernel.hpp"
 
 #include "glutils/guard.hpp"
 #include "glutils/program.hpp"
@@ -12,136 +12,84 @@
 
 namespace placement {
 
-    // TODO: rewrite this to solve the workgroup ordering problem with an atomically incremented variable:
-    /*
-     * IndexReductionKernel:
-     *  buffer CandidateIndexBuffer
-     *  {
-     *      uint index_count;
-     *      uint index_buffer[]; // alignment is as expected
-     *  };
-     *
-     *  shared uint index_offset;
-     *  shared uint indices[gl_WorkGroupSize * 2];
-     *
-     *  void main()
-     *  {
-     *      // copy to shared memory
-     *      indices[... first] = index_buffer[...];
-     *      indices[... second] = index_buffer[...];
-     *
-     *      for (uint group_size = 1; group_size < gl_WorkGroupSize.x; group_size <<= 1)
-     *      {
-     *          barrier();
-     *          memoryBarrierShared();
-     *
-     *          ... // same code
-     *          indices[write_index] += indices[read_index];
-     *      }
-     *
-     *      if (gl_LocalInvocationID.x == gl_WorkGroupSize.x - 1)
-     *          index_offset = atomicAdd(index_count, indices[gl_WokGroupSize.x * 2 - 1]);
-     *
-     *      barrier();
-     *      memoryBarrierShared();
-     *
-     *      // copy to buffer from shared memory
-     *      index_buffer[... first] = indices[...] + index_offset;
-     *      index_buffer[... second] = indices[...] + index_offset;
-     *  }
-     *
-     * CopyKernel:
-     *  buffer IndexBuffer
-     *  {
-     *      uint count;
-     *      uint indices[];
-     *  };
-     *
-     *  buffer From
-     *  {
-     *      vec3 from[];
-     *  };
-     *
-     *  buffer To
-     *  {
-     *      vec3 to[];
-     *  };
-     *
-     *  void main()
-     *  {
-     *      // check validity of indices
-     *      to[indices[gl_GlobalInvocationID.x]] = from[gl_GlobalInvocationID.x];
-     *  }
-     */
-
-    /// Reduces the position buffer, discarding invalid positions.
-    class ReductionKernel final : public PlacementPipelineKernel
+    class ReductionKernel : public PlacementPipelineKernel
     {
+        using PlacementPipelineKernel::PlacementPipelineKernel;
+
     public:
-        ReductionKernel();
+        [[nodiscard]]
+        glutils::GLuint getIndexBufferBindingIndex() const
+        {
+            return m_index_buffer_ssb.getBindingIndex();
+        }
 
-        /**
-         * @brief Execute this compute kernel, discarding all invalid elements in the position buffer.
-         * All valid positions will be moved to adjacent locations within the position buffer, like an array. The array
-         * begins at the start of the buffer, and the number of elements it contains is equal to the value of the last
-         * element in the index buffer.
-         * @param candidate_count The number of candidates. That is, the exact number of elements in the position and
-         * index buffers.
-         * @return The byte offset of the last element of the index buffer. This is measured from the start of the
-         * memory range mapped to the index buffer binding point, which may or may not coincide with the start of the
-         * buffer that contains it.
-         */
-        auto dispatchCompute(std::size_t candidate_count) const -> std::size_t;
-
-        /// set/get the binding indices used for the auxiliary buffers, which must be different from the position and index buffers as well as each other.
-        void setAuxiliaryBufferBindingIndices(glm::uvec2 indices);
+        void setIndexBufferBindingIndex(glutils::GLuint index)
+        {
+            m_index_buffer_ssb.setBindingIndex(*this, index);
+        }
 
         [[nodiscard]]
-        auto getAuxiliaryBufferBindingIndices() const -> glm::uvec2;
+        static glutils::GLsizeiptr calculateIndexBufferSize(glutils::GLsizeiptr element_count)
+        {
+            return (element_count + 1) * static_cast<glutils::GLsizeiptr>(sizeof(unsigned int));
+        }
+
+    protected:
+        static constexpr auto s_index_ssb_name = "IndexBuffer";
+        ShaderStorageBlock m_index_buffer_ssb {*this, s_index_ssb_name};
+    };
+
+    class IndexAssignmentKernel final : public ReductionKernel
+    {
+    public:
+        IndexAssignmentKernel();
+
+        /**
+         * @brief Execute this compute kernel, assigning a unique zero-based index to each valid candidate.
+         * @param candidate_count The number of candidates. That is, the exact number of elements in the position buffer.
+         */
+        void dispatchCompute(std::size_t candidate_count) const;
 
     private:
-        static const std::string s_source_string;
+        static constexpr unsigned int s_work_group_size = 32;
 
-        /// Number of invocations per work group
-        static constexpr unsigned int s_work_group_size = 64;
+        static const std::string s_source_string;
 
         /// determine the required number of workgroups given the number of elements.
         [[nodiscard]]
         static auto m_calculateNumWorkGroups(std::size_t element_count) -> std::size_t;
+    };
 
-        class AuxiliaryKernel : public ComputeKernel
+    class IndexedCopyKernel final : public ReductionKernel
+    {
+    public:
+        IndexedCopyKernel();
+
+        /// Execute this kernel, copying all valid positions in the candidate buffer to the position buffer.
+        void dispatchCompute(std::size_t candidate_count) const;
+
+        [[nodiscard]]
+        glutils::GLuint getPositionBufferBindingIndex() const
         {
-        public:
-            void setInputBindingIndex(glutils::GLuint i) {m_input_block.setBindingIndex(*this, i);}
-            [[nodiscard]] auto getInputBindingIndex() const {return m_input_block.getBindingIndex();}
-            void setOutputBindingIndex(glutils::GLuint i) {m_output_block.setBindingIndex(*this, i);}
-            [[nodiscard]] auto getOutputBindingIndex() const {return m_output_block.getBindingIndex();}
-        protected:
-            explicit AuxiliaryKernel(std::string source_string);
-        private:
-            ShaderStorageBlock m_input_block;
-            ShaderStorageBlock m_output_block;
-        };
+            return m_position_ssb.getBindingIndex();
+        }
 
-        class Forward final : public AuxiliaryKernel
+        void setPositionBufferBindingIndex(glutils::GLuint index)
         {
-        public:
-            Forward();
+            m_position_ssb.setBindingIndex(*this, index);
+        }
 
-            void dispatchCompute(std::size_t index_count) const;
-
-        private:
-            static const std::string s_source_string;
-        } m_forward_kernel;
-
-        class Backward final : public AuxiliaryKernel
+        /// position buffer is an array of vec3, but with vec4 alignment
+        static glutils::GLsizeiptr calculatePositionBufferSize(glutils::GLsizeiptr reduced_count)
         {
-            Backward();
+            return reduced_count * static_cast<glutils::GLsizeiptr>(sizeof(glm::vec4));
+        }
 
-            void dispatchCompute(std::size)
-        private:
-            static const std::string s_source_string;
-        } m_backward_kernel;
+    private:
+        static const std::string s_source_string;
+        static constexpr auto s_position_ssb_name = "PositionBuffer";
+        static constexpr auto s_workgroup_size = 64;
+        ShaderStorageBlock m_position_ssb {*this, s_position_ssb_name};
     };
 
 } // placement

@@ -7,7 +7,7 @@
 #include <vector>
 
 template<auto L, typename T, auto Q>
-auto operator<< (std::ostream& out, glm::vec<L, T, Q> v) -> std::ostream&
+std::ostream& operator<< (std::ostream& out, glm::vec<L, T, Q> v)
 {
     constexpr auto sep = ", ";
     out << "(" << v.x << sep << v.y;
@@ -20,8 +20,14 @@ auto operator<< (std::ostream& out, glm::vec<L, T, Q> v) -> std::ostream&
     return out << ")";
 }
 
+template<typename T, typename Y>
+std::ostream& operator<< (std::ostream& out, const std::pair<T, Y>& pair)
+{
+    return out << "{first: " << pair.first << ", second: " << pair.second << "}";
+}
+
 template<class T>
-auto operator<< (std::ostream& out, std::vector<T> vector) ->std::ostream&
+std::ostream& operator<< (std::ostream& out, const std::vector<T>& vector)
 {
     if (vector.empty())
         return out << "[]";
@@ -33,5 +39,4 @@ auto operator<< (std::ostream& out, std::vector<T> vector) ->std::ostream&
         out << ", " << *it++;
     return out << "]";
 }
-
 #endif //PROCEDURALPLACEMENTLIB_OSTREAM_OPERATORS_H

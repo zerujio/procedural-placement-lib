@@ -12,7 +12,7 @@ namespace placement {
 
     class ComputeKernel
     {
-    public:
+    protected:
         /// Compile and link a compute shader from source code.
         explicit ComputeKernel(const char* source_string) : ComputeKernel(1, &source_string) {}
 
@@ -27,9 +27,8 @@ namespace placement {
 
         ComputeKernel(unsigned int count, const char** source_strings);
 
-    protected:
         /// Equivalent to calling glUseProgram with this kernel's program name.
-        void useProgram() const;
+        void m_useProgram() const;
 
         // Various utility classes
 
@@ -97,12 +96,14 @@ namespace placement {
             InterfaceBlock(const ComputeKernel& kernel, const char* name) : InterfaceBlock(kernel, {kernel, name}) {}
 
             /// Change the binding point.
-            void setBindingIndex(const ComputeKernel& kernel, glutils::GLuint index) const
+            void setBindingIndex(const ComputeKernel& kernel, glutils::GLuint index)
             {
                 if constexpr (InterfaceType == Type::uniform_block)
                     kernel.m_program->setUniformBlockBinding(m_resource_index.get(), index);
                 else if constexpr (InterfaceType == Type::shader_storage_block)
                     kernel.m_program->setShaderStorageBlockBinding(m_resource_index.get(), index);
+
+                m_binding_index = index;
             }
         };
 
@@ -119,10 +120,10 @@ namespace placement {
 
             [[nodiscard]] auto isValid() const -> bool {return m_location >= 0;}
 
-            operator bool() const {return isValid();}
+            explicit operator bool() const {return isValid();}
 
         private:
-            glutils::GLint m_location;
+            glutils::GLint m_location {-1};
         };
 
 
@@ -135,8 +136,11 @@ namespace placement {
                 queryTextureUnit(kernel);
             }
 
+            TextureSampler(const ComputeKernel& kernel, const char* name)
+            : TextureSampler(kernel, UniformLocation(kernel, name)) {}
+
             /// Set the texture unit for this sampler
-            void setTextureUnit(const ComputeKernel& kernel, glutils::GLuint index) const;
+            void setTextureUnit(const ComputeKernel& kernel, glutils::GLuint index);
 
             /**
              * @brief Get the cached texture unit index.
@@ -150,8 +154,8 @@ namespace placement {
             /// Query the GL for the current texture unit index (and update the cached value).
             auto queryTextureUnit(const ComputeKernel& kernel) -> glutils::GLuint;
         private:
-            glutils::GLuint m_tex_unit {0};
             UniformLocation m_location;
+            glutils::GLuint m_tex_unit {0};
         };
 
         template<typename T>
@@ -161,9 +165,21 @@ namespace placement {
         }
 
         template<typename T>
+        void setUniform(UniformLocation location, T value) const
+        {
+            setUniform(location.get(), value);
+        }
+
+        template<typename T>
         void setUniform(glutils::GLint location, glutils::GLsizei count, const T* values) const
         {
             m_program->setUniform(location, count, values);
+        }
+
+        template<typename T>
+        void setUniform(UniformLocation location, glutils::GLsizei count, const T* values) const
+        {
+            setUniform(location.get(), count, values);
         }
 
         template<typename T>
@@ -171,6 +187,13 @@ namespace placement {
                               const T* values) const
         {
             m_program->setUniformMatrix(location, count, transpose, values);
+        }
+
+        template<typename T>
+        void setUniformMatrix(UniformLocation location, glutils::GLsizei count, glutils::GLboolean transpose,
+                              const T* values) const
+        {
+            setUniformMatrix(location.get(), count, transpose, values);
         }
 
     private:
