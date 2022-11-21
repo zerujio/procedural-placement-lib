@@ -112,18 +112,14 @@ void main()
     const std::string IndexedCopyKernel::s_source_string = (std::stringstream() << R"glsl(
 #version 430 core
 
-layout(local_size_x=)glsl" << IndexedCopyKernel::s_workgroup_size << R"glsl() in;
+#define INVALID_INDEX -1u
 
-struct Candidate
-{
-    vec3 position;
-    bool valid;
-};
+layout(local_size_x=)glsl" << IndexedCopyKernel::s_workgroup_size << R"glsl() in;
 
 layout(std430, binding = 0) restrict readonly
 buffer )glsl" << IndexedCopyKernel::s_candidate_ssb_name << R"glsl(
 {
-    Candidate candidate_array[];
+    vec3 candidate_array[];
 };
 
 layout(std430, binding = 1) restrict readonly
@@ -143,9 +139,9 @@ void main()
 {
     if (gl_GlobalInvocationID.x < candidate_array.length())
     {
-        const uint reduced_index = index_array[gl_GlobalInvocationID.x];
-        if (reduced_index < index_sum);
-            position_array[reduced_index] = candidate_array[gl_GlobalInvocationID.x].position;
+        const uint array_index = index_array[gl_GlobalInvocationID.x];
+        if (array_index != INVALID_INDEX)
+            position_array[array_index] = candidate_array[gl_GlobalInvocationID.x];
     }
 }
 )glsl").str();

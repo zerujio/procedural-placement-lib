@@ -10,7 +10,6 @@
 #include <memory>
 #include <ostream>
 #include <algorithm>
-#include <unordered_set>
 
 // included here to make it available to catch.hpp
 #include "ostream_operators.hpp"
@@ -101,8 +100,42 @@ private:
 
 CATCH_REGISTER_LISTENER(ContextInitializer)
 
+template<typename Vec>
+bool vecOrder(const Vec& l, const Vec& r)
+{
+    if (l.x < r.x)
+        return true;
+    else if (r.x < l.x)
+        return false;
 
-TEST_CASE("PlacementPipeline", "[placement][pipeline]")
+    if constexpr (Vec::length() > 1)
+    {
+        if (l.y < r.y)
+            return true;
+        else if (r.y < l.y)
+            return false;
+    }
+
+    if constexpr (Vec::length() > 2)
+    {
+        if (l.z < r.z)
+            return true;
+        else if (r.z < l.z)
+            return false;
+    }
+
+    if constexpr (Vec::length() > 3)
+    {
+        if (l.w < r.w)
+            return true;
+        else if (r.w < l.w)
+            return false;
+    }
+
+    return false;
+};
+
+TEST_CASE("PlacementPipeline", "[pipeline]")
 {
     placement::PlacementPipeline pipeline;
 
@@ -150,37 +183,36 @@ TEST_CASE("PlacementPipeline", "[placement][pipeline]")
         CHECK(point.z < upper_bound.y);
     }
 
-    auto makePositionSet = [](const std::vector<glm::vec3>& positions)
-    {
-        auto compareVec3 = [](const glm::vec3& l, const glm::vec3& r)
-        {
-            return l.x < r.x && l.y < r.y && l.z < r.z;
-        };
-
-        std::set<glm::vec3, decltype(compareVec3)> set(compareVec3);
-
-        for (const auto& p : positions)
-            set.insert(p);
-
-        return set;
-    };
-
-    SECTION("Determinism (trivial)")
+    SECTION("Determinism (simple)")
     {
         pipeline.setWorldScale({1.0f, 1.0f, 1.0f});
 
         pipeline.computePlacement(0.01f, glm::vec2(0.f), glm::vec2(1.f));
-        const auto positions0 = pipeline.copyResultsToCPU();
-        const auto position_set0 = makePositionSet(positions0);
+        auto positions0 = pipeline.copyResultsToCPU();
 
         pipeline.computePlacement(0.01f, glm::vec2(0.f), glm::vec2(1.f));
-        const auto positions1 = pipeline.copyResultsToCPU();
-        const auto position_set1 = makePositionSet(positions1);
+        auto positions1 = pipeline.copyResultsToCPU();
 
         CHECK(!positions0.empty());
         CHECK(!positions1.empty());
-        CHECK(positions0.size() == positions1.size());
-        CHECK(position_set0 == position_set1);
+
+        {
+            CAPTURE(positions0, positions1);
+            REQUIRE(positions0.size() == positions1.size());
+        }
+
+        std::sort(positions0.begin(), positions0.end(), vecOrder<glm::vec3>);
+        std::sort(positions1.begin(), positions1.end(), vecOrder<glm::vec3>);
+
+        std::vector<glm::vec3> diff;
+        diff.resize(positions0.size());
+
+        const auto diff_end = std::set_symmetric_difference(positions0.begin(), positions0.end(),
+                                                            positions1.begin(), positions1.end(),
+                                                            diff.begin(), vecOrder<glm::vec3>);
+        diff.erase(diff_end, diff.end());
+        CAPTURE(diff);
+        CHECK(diff.empty());
     }
 
     const float footprint = GENERATE(take(3, random(0.01f, 0.1f)));
@@ -197,6 +229,47 @@ TEST_CASE("PlacementPipeline", "[placement][pipeline]")
     const glm::vec2 upper_bound = lower_bound + glm::vec2(boundary_size_x, boundary_size_y);
 
     INFO("upper_bound = " << upper_bound);
+
+    SECTION("Determinism")
+    {
+        auto computePlacement = [&]()
+        {
+            pipeline.computePlacement(footprint, lower_bound, upper_bound);
+            auto results = pipeline.copyResultsToCPU();
+            std::sort(results.begin(), results.end(), vecOrder<glm::vec3>);
+            return results;
+        };
+
+        const auto result0 = computePlacement();
+        CAPTURE(result0);
+        CHECK(!result0.empty());
+
+        const auto result1 = computePlacement();
+        CAPTURE(result1);
+        CHECK(!result1.empty());
+
+        auto computeDiff = [](const std::vector<glm::vec3>& l, const std::vector<glm::vec3>& r)
+        {
+            std::vector<glm::vec3> diff;
+            diff.resize(std::max(l.size(), r.size()));
+            const auto diff_end = std::set_symmetric_difference(l.begin(), l.end(), r.begin(), r.end(),
+                                                                diff.begin(), vecOrder<glm::vec3>);
+            diff.erase(diff_end, diff.end());
+            return diff;
+        };
+
+        const auto diff01 = computeDiff(result0, result1);
+        CAPTURE(diff01);
+        CHECK(diff01.empty());
+
+        const auto result2 = computePlacement();
+        CAPTURE(result2);
+        CHECK(!result2.empty());
+
+        const auto diff02 = computeDiff(result0, result2);
+        CAPTURE(diff02);
+        CHECK(diff02.empty());
+    }
 
     SECTION("Boundary and separation")
     {
@@ -221,26 +294,6 @@ TEST_CASE("PlacementPipeline", "[placement][pipeline]")
         }
     }
 
-    SECTION("Determinism")
-    {
-        pipeline.computePlacement(footprint, lower_bound, upper_bound);
-        const auto result0 = pipeline.copyResultsToCPU();
-        REQUIRE(!result0.empty());
-
-        pipeline.computePlacement(footprint, lower_bound, upper_bound);
-        const auto result1 = pipeline.copyResultsToCPU();
-        REQUIRE(!result1.empty());
-
-        const auto position_set0 = makePositionSet(result0);
-        const auto position_set1 = makePositionSet(result1);
-        REQUIRE(position_set0 == position_set1);
-
-        pipeline.computePlacement(footprint * 1.3f , lower_bound, upper_bound);
-        const auto result2 = pipeline.copyResultsToCPU();
-        const auto position_set2 = makePositionSet(result2);
-        CHECK(position_set0 != position_set2);
-    }
-
     const GLuint textures[] = {white_texture, black_texture};
     gl.DeleteTextures(2, &textures[0]);
 }
@@ -258,7 +311,7 @@ TEMPLATE_TEST_CASE("Common PlacementPipelineKernel operations", "[kernel][pipeli
     }
 }
 
-TEST_CASE("GenerationKernel", "[generation][kernel][pipeline]")
+TEST_CASE("GenerationKernel", "[generation][kernel]")
 {
     GenerationKernel kernel;
 
@@ -520,144 +573,80 @@ TEST_CASE("IndexAssignmentKernel", "[reduction][kernel]")
     }
 }
 
-/*
-TEST_CASE("ReductionKernel", "[reduction][kernel][pipeline]")
+TEST_CASE("IndexedCopyKernel", "[reduction][kernel]")
 {
-    ReductionKernel kernel;
-
-    // generate test data
     using Indices = std::vector<unsigned int>;
-    auto indices = GENERATE(Indices{0}, Indices{1},
-                                  Indices{0, 0}, Indices{0, 1}, Indices{1, 0}, Indices{1, 1},
-                                  take(6, chunk(10, random(0u, 1u))),
-                                  take(5, chunk(20, random(0u, 1u))),
-                                  take(3, chunk(64, random(0u, 1u))),
-                                  take(3, chunk(333, random(0u, 1u))),
-                                  take(3, chunk(1024, random(0u, 1u))),
-                                  take(3, chunk(15000, random(0u, 1u))));
+    auto validity_indices = GENERATE(take(6, chunk(10, random(0u, 1u))),
+                                     take(5, chunk(20, random(0u, 1u))),
+                                     take(3, chunk(64, random(0u, 1u))),
+                                     take(3, chunk(333, random(0u, 1u))),
+                                     take(3, chunk(1024, random(0u, 1u))),
+                                     take(3, chunk(15000, random(0u, 1u))));
 
-    CAPTURE(indices.size());
-    INFO("Initial state:")
-    CAPTURE(indices);
+    std::vector<glm::vec4> candidates;
+    candidates.reserve(validity_indices.size());
 
-    std::vector<glm::vec4> vec4_positions;
-    while (vec4_positions.size() < indices.size())
-        vec4_positions.emplace_back(glm::vec4(static_cast<float>(vec4_positions.size())));
+    std::vector<glm::vec3> valid_positions;
+    valid_positions.reserve(validity_indices.size());
 
-    // allocate gpu memory
-    glutils::Guard<glutils::Buffer> buffer;
-    const glutils::BufferRange position_range {
-        *buffer,
-        0,
-        static_cast<GLsizeiptr>(ReductionKernel::calculatePositionBufferSize(vec4_positions.size()))};
+    std::vector<unsigned int> copy_indices;
+    copy_indices.reserve(validity_indices.size());
 
-    const glutils::BufferRange index_range {
-        *buffer,
-        position_range.size,
-        static_cast<GLsizeiptr>(ReductionKernel::calculateIndexBufferSize(indices.size()))};
-
-    buffer->allocateImmutable(position_range.size + index_range.size, glutils::Buffer::StorageFlags::dynamic_storage, nullptr);
-
-    position_range.bindRange(glutils::Buffer::IndexedTarget::shader_storage, ReductionKernel::default_position_ssb_binding);
-    index_range.bindRange(glutils::Buffer::IndexedTarget::shader_storage, ReductionKernel::default_index_ssb_binding);
-
-    position_range.write(vec4_positions.data());
-    index_range.write(indices.data());
-
-    kernel.dispatchCompute(indices.size()); // <<< dispatch compute
-
-    SECTION("Correctness")
+    unsigned int index_sum = 0;
+    for (auto valid : validity_indices)
     {
-        std::vector<glm::vec3> positions;
-        positions.reserve(vec4_positions.size());
-        for (const auto& vec4_p : vec4_positions)
-            positions.emplace_back(vec4_p);
-
-        auto sequential_reduction = [](std::vector<glm::vec3> position_buffer, std::vector<GLuint> index_buffer)
+        candidates.emplace_back(glm::vec4(candidates.size()));
+        if (valid)
         {
-            const auto index_buffer_copy = index_buffer;
-
-            unsigned int index_acc = 0;
-            for (auto& index : index_buffer)
-            {
-                index_acc += index;
-                index = index_acc;
-            }
-
-            for (int i = 0; i < position_buffer.size(); i++)
-            {
-                const bool valid = index_buffer_copy[i];
-                if (valid)
-                    position_buffer[index_buffer[i] - 1] = position_buffer[i];
-            }
-
-            position_buffer.resize(index_buffer.back());
-            return std::make_pair(position_buffer, index_buffer);
-        };
-
-        const auto expected_values = sequential_reduction(positions, indices);
-
-        // read indices
-        index_range.read(indices.data());
-
-        // check
-        const auto& expected_indices = expected_values.second;
-
-        REQUIRE(indices == expected_indices);
-
-        INFO("Reduced:")
-        CAPTURE(indices, indices.back());
-
-        REQUIRE(indices.back() <= indices.size());
-
-        // read positions
-        position_range.read(vec4_positions.data());
-
-        // transform into vec3
-        positions.resize(indices.back());
-        for (int i = 0; i < positions.size(); i++)
-            positions[i] = vec4_positions[i];
-
-        // check
-        const auto& expected_positions = expected_values.first;
-
-        CAPTURE(vec4_positions, positions.size(), expected_positions.size());
-        REQUIRE(positions == expected_positions);
-    }
-
-    SECTION("Determinism")
-    {
-        // reference values
-        std::vector<glm::vec4> reference_positions;
-        reference_positions.resize(vec4_positions.size());
-        position_range.read(reference_positions.data());
-
-        std::vector<GLuint> reference_indices;
-        reference_indices.resize(indices.size());
-        index_range.read(reference_indices.data());
-
-        // duplicate value storage
-        std::vector<glm::vec4> duplicate_positions;
-        duplicate_positions.resize(reference_positions.size());
-
-        std::vector<GLuint> duplicate_indices;
-        duplicate_indices.resize(reference_indices.size());
-
-        constexpr std::size_t num_runs = 8;
-        for (std::size_t i = 0; i < num_runs; i++)
-        {
-            INFO("repetition num.: " << i);
-
-            position_range.write(vec4_positions.data());
-            index_range.write(indices.data());
-
-            kernel.dispatchCompute(reference_positions.size());
-
-            position_range.read(duplicate_positions.data());
-            index_range.read(duplicate_indices.data());
-
-            CHECK(duplicate_positions == reference_positions);
+            valid_positions.emplace_back(candidates.back());
+            copy_indices.emplace_back(index_sum);
         }
+        else
+            copy_indices.emplace_back(-1u);
+        index_sum += valid;
     }
+
+    CAPTURE(validity_indices);
+
+    using namespace glutils;
+
+    Guard<Buffer> buffer;
+    const BufferRange candidate_range {*buffer, 0, static_cast<GLsizeiptr>(candidates.size() * sizeof(glm::vec4))};
+    const BufferRange position_range {*buffer, candidate_range.size, static_cast<GLsizeiptr>(valid_positions.size() * sizeof(glm::vec4))};
+    const BufferRange index_sum_range {*buffer, position_range.offset + position_range.size, sizeof(unsigned int)};
+    const BufferRange index_array_range {*buffer, index_sum_range.offset + index_sum_range.size, static_cast<GLsizeiptr>(copy_indices.size() * sizeof(GLuint))};
+    const BufferRange index_range {*buffer, index_sum_range.offset, index_sum_range.size + index_array_range.size};
+
+    buffer->allocateImmutable(candidate_range.size + position_range.size + index_range.size,
+                              Buffer::StorageFlags::dynamic_storage | Buffer::StorageFlags::map_read);
+
+    candidate_range.write(candidates.data());
+    index_sum_range.write(&index_sum);
+    index_array_range.write(copy_indices.data());
+
+    IndexedCopyKernel kernel;
+    kernel.setCandidateBufferBindingIndex(0);
+    kernel.setPositionBufferBindingIndex(1);
+    kernel.setIndexBufferBindingIndex(2);
+
+    candidate_range.bindRange(Buffer::IndexedTarget::shader_storage, kernel.getCandidateBufferBindingIndex());
+    position_range.bindRange(Buffer::IndexedTarget::shader_storage, kernel.getPositionBufferBindingIndex());
+    index_range.bindRange(Buffer::IndexedTarget::shader_storage, kernel.getIndexBufferBindingIndex());
+
+    kernel.dispatchCompute(candidates.size());
+
+    gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+
+    std::vector<glm::vec3> copied_positions;
+    copied_positions.reserve(valid_positions.size());
+    auto mapped_ptr = static_cast<glm::vec4*>(position_range.map(Buffer::AccessFlags::read));
+
+    REQUIRE(mapped_ptr);
+
+    for (std::size_t i = 0; i < valid_positions.size(); i++)
+        copied_positions.emplace_back(mapped_ptr[i]);
+
+    buffer->unmap();
+
+    CHECK(valid_positions == copied_positions);
 }
- */

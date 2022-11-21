@@ -5,6 +5,7 @@
 #include "glm/glm.hpp"
 #include <ostream>
 #include <vector>
+#include <set>
 
 template<auto L, typename T, auto Q>
 std::ostream& operator<< (std::ostream& out, glm::vec<L, T, Q> v)
@@ -39,4 +40,17 @@ std::ostream& operator<< (std::ostream& out, const std::vector<T>& vector)
         out << ", " << *it++;
     return out << "]";
 }
+
+template<typename T, typename Compare, typename Alloc>
+std::ostream& operator<< (std::ostream& out, const std::set<T, Compare, Alloc>& set)
+{
+    if (set.empty())
+        return out << "{}";
+    auto it = set.begin();
+    out << "{" << *it++;
+    while (it != set.end())
+        out << ", " << *it++;
+    return out << "}";
+}
+
 #endif //PROCEDURALPLACEMENTLIB_OSTREAM_OPERATORS_H
