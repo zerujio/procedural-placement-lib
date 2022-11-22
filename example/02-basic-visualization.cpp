@@ -1,5 +1,6 @@
 #include "placement/placement.hpp"
 #include "glutils/debug.hpp"
+#include "glutils/guard.hpp"
 #include "simple-renderer/renderer.hpp"
 #include "GLFW/glfw3.h"
 #include "glm/glm.hpp"
@@ -96,16 +97,28 @@ int main()
     glfwSetWindowSizeCallback(glfw_window.get(), onWindowResize);
 
     //placement
-    GLuint white_texture = loadTexture("assets/white.png");
-    GLuint black_texture = loadTexture("assets/black.png");
+    GLuint densitymap = loadTexture("assets/heightmap.png"); // deliberately using heightmap as densitymap
+    GLuint heightmap = loadTexture("assets/black.png");
 
     placement::PlacementPipeline pipeline;
-    pipeline.setDensityTexture(white_texture);
-    pipeline.setHeightTexture(black_texture);
+    pipeline.setDensityTexture(densitymap);
+    pipeline.setHeightTexture(heightmap);
     pipeline.setWorldScale({1.f, 1.f, 1.f});
 
-    pipeline.computePlacement(0.01f, glm::vec2(0.f), glm::vec2(1.f));
-    const std::vector<glm::vec3> positions = pipeline.copyResultsToCPU();
+    pipeline.computePlacement(0.001f, glm::vec2(0.f), glm::vec2(1.f));
+
+    // copy results between gpu buffers
+    using namespace glutils;
+    Buffer buffer = Buffer::create();
+    buffer.allocate(pipeline.getResultsSize() * sizeof(glm::vec4), Buffer::Usage::dynamic_draw);
+
+    pipeline.copyResultsToGPUBuffer(buffer.getName());
+
+    VertexArray vertex_array = VertexArray::create();
+    vertex_array.bindVertexBuffer(0, buffer, 0, sizeof(glm::vec4));
+    vertex_array.bindAttribute(0 /*attrib index*/, 0 /*buffer index*/);
+    vertex_array.setAttribFormat(0 /*attrib index*/, VertexArray::AttribSize::three, VertexArray::AttribType::float_, false, 0);
+    vertex_array.enableAttribute(0);
 
     // rendering
     simple::Renderer renderer;
@@ -115,8 +128,7 @@ int main()
     simple::ShaderProgram program ("void main() {gl_Position = vec4(vertex_position.xzy * vec3(2.f, 2.f, 1.f) - vec3(1.f, 1.f, 0.f), 1.0f);}",
                                    "void main() {frag_color = vec4(1.0f);}");
 
-    simple::Mesh point_mesh (positions);
-    point_mesh.setDrawMode(simple::Mesh::DrawMode::points);
+    simple::Mesh point_mesh (Guard<Buffer>(buffer), Guard<VertexArray>(vertex_array), GL_POINTS, pipeline.getResultsSize(), 0);
 
     while (!glfwWindowShouldClose(glfw_window.get()))
     {
