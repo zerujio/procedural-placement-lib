@@ -75,7 +75,8 @@ int main()
         const glm::vec2 lower_bound{glm::vec2(texture_size.x, texture_size.y) / 2.0f};
         const glm::vec2 upper_bound{lower_bound + 100.0f};
 
-        auto positions = pipeline.computePlacement(5.0f, lower_bound, upper_bound);
+        pipeline.computePlacement(5.0f, lower_bound, upper_bound);
+        const std::vector<glm::vec3> positions = pipeline.copyResultsToCPU();
 
         std::cout << std::endl << "placement results:\n";
         for (const auto &p: positions)

@@ -67,6 +67,11 @@ unsigned int loadTexture(const char* filename)
     return texture;
 }
 
+void onWindowResize(GLFWwindow* _window, int width, int height)
+{
+    glutils::gl.Viewport(0, 0, width, height);
+}
+
 int main()
 {
     GLFWInitGuard glfw_init_guard;
@@ -88,6 +93,8 @@ int main()
     glutils::enableDebugCallback();
     glutils::gl.Enable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
 
+    glfwSetWindowSizeCallback(glfw_window.get(), onWindowResize);
+
     //placement
     GLuint white_texture = loadTexture("assets/white.png");
     GLuint black_texture = loadTexture("assets/black.png");
@@ -97,14 +104,15 @@ int main()
     pipeline.setHeightTexture(black_texture);
     pipeline.setWorldScale({1.f, 1.f, 1.f});
 
-    const std::vector<glm::vec3> positions = pipeline.computePlacement(0.01f, glm::vec2(0.f), glm::vec2(1.f));
+    pipeline.computePlacement(0.01f, glm::vec2(0.f), glm::vec2(1.f));
+    const std::vector<glm::vec3> positions = pipeline.copyResultsToCPU();
 
     // rendering
     simple::Renderer renderer;
 
     simple::Camera camera;
 
-    simple::ShaderProgram program ("void main() {gl_Position = vec4((vertex_position.xzy - vec3()), 1.0f);}",
+    simple::ShaderProgram program ("void main() {gl_Position = vec4(vertex_position.xzy * vec3(2.f, 2.f, 1.f) - vec3(1.f, 1.f, 0.f), 1.0f);}",
                                    "void main() {frag_color = vec4(1.0f);}");
 
     simple::Mesh point_mesh (positions);

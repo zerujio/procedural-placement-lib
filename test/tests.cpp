@@ -19,26 +19,103 @@ using namespace placement;
 
 GladGLContext gl;
 
-auto loadTexture(const char* path) -> GLuint
+class TextureLoader
 {
-    GLuint texture;
-    glm::ivec2 texture_size;
-    int channels;
-    std::unique_ptr<stbi_uc[]> texture_data {stbi_load(path, &texture_size.x, &texture_size.y, &channels, 0)};
+public:
+    ~TextureLoader()
+    {
+        clear();
+    }
 
-    if (!texture_data)
-        throw std::runtime_error(stbi_failure_reason());
+    GLuint load(const char* filename)
+    {
+        const GLuint new_tex = s_loadTexture(filename);
+        m_loaded_textures[filename] = new_tex;
+        return new_tex;
+    }
 
-    gl.GenTextures(1, &texture);
-    gl.BindTexture(GL_TEXTURE_2D, texture);
-    const GLenum formats[]{GL_RED, GL_RG, GL_RGB, GL_RGBA};
-    const GLenum format = formats[channels - 1];
-    gl.TexImage2D(GL_TEXTURE_2D, 0, format, texture_size.x, texture_size.y, 0, format, GL_UNSIGNED_BYTE,
-                  texture_data.get());
-    gl.GenerateMipmap(GL_TEXTURE_2D);
+    GLuint load(const std::string& filename)
+    {
+        return load(filename.c_str());
+    }
 
-    return texture;
-}
+    GLuint get(const char* filename) const
+    {
+        const auto it = m_loaded_textures.find(filename);
+        if (it == m_loaded_textures.end())
+            throw std::runtime_error("no loaded texture with given filename");
+        return it->second;
+    }
+
+    GLuint get(const std::string& filename) const
+    {
+        return get(filename.c_str());
+    }
+
+    GLuint operator[](const std::string& filename)
+    {
+        return operator[](filename.c_str());
+    }
+
+    GLuint operator[] (const char* filename)
+    {
+        const auto it = m_loaded_textures.find(filename);
+        if (it == m_loaded_textures.end())
+            return load(filename);
+        return it->second;
+    }
+
+    void unload(const char* filename)
+    {
+        const auto it = m_loaded_textures.find(filename);
+        if (it != m_loaded_textures.end())
+        {
+            gl.DeleteTextures(1, &it->second);
+            m_loaded_textures.erase(it);
+        }
+    }
+
+    void unload(const std::string& filename){unload(filename.c_str());}
+
+    void clear()
+    {
+        if (m_loaded_textures.empty())
+            return;
+
+        std::vector<GLuint> names;
+        names.reserve(m_loaded_textures.size());
+        for (const auto& pair : m_loaded_textures)
+            names.emplace_back(pair.second);
+        m_loaded_textures.clear();
+        gl.DeleteTextures(names.size(), names.data());
+    }
+
+private:
+    std::map<std::string, GLuint> m_loaded_textures;
+
+    static GLuint s_loadTexture(const char* filename)
+    {
+        GLuint texture;
+        glm::ivec2 texture_size;
+        int channels;
+        std::unique_ptr<stbi_uc[]> texture_data {stbi_load(filename, &texture_size.x, &texture_size.y, &channels, 0)};
+
+        if (!texture_data)
+            throw std::runtime_error(stbi_failure_reason());
+
+        gl.GenTextures(1, &texture);
+        gl.BindTexture(GL_TEXTURE_2D, texture);
+        const GLenum formats[]{GL_RED, GL_RG, GL_RGB, GL_RGBA};
+        const GLenum format = formats[channels - 1];
+        gl.TexImage2D(GL_TEXTURE_2D, 0, format, texture_size.x, texture_size.y, 0, format, GL_UNSIGNED_BYTE,
+                      texture_data.get());
+        gl.GenerateMipmap(GL_TEXTURE_2D);
+
+        return texture;
+    }
+};
+
+TextureLoader s_texture_loader;
 
 class ContextInitializer : public Catch::TestEventListenerBase
 {
@@ -75,6 +152,7 @@ public:
 
     void testRunEnded(const Catch::TestRunStats&) override
     {
+        s_texture_loader.clear();
         glfwDestroyWindow(m_window);
         glfwTerminate();
     }
@@ -142,10 +220,10 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
     const glm::vec3 world_scale = {10.0f, 1.0f, 10.0f};
     pipeline.setWorldScale(world_scale);
 
-    const auto black_texture = loadTexture("assets/black.png");
+    const auto black_texture = s_texture_loader["assets/black.png"];
     pipeline.setHeightTexture(black_texture);
 
-    const auto white_texture = loadTexture("assets/white.png");
+    const auto white_texture = s_texture_loader["assets/white.png"];
     pipeline.setDensityTexture(white_texture);
 
     SECTION("Placement with < 0 area should return an empty vector")
@@ -293,9 +371,6 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
             }
         }
     }
-
-    const GLuint textures[] = {white_texture, black_texture};
-    gl.DeleteTextures(2, &textures[0]);
 }
 
 TEMPLATE_TEST_CASE("Common PlacementPipelineKernel operations", "[kernel][pipeline]", GenerationKernel, IndexAssignmentKernel, IndexedCopyKernel)
@@ -344,8 +419,8 @@ TEST_CASE("GenerationKernel", "[generation][kernel]")
         const glm::vec2 upper_bound = lower_bound + glm::vec2(length_x, length_y);
         INFO("upper_bound=" << upper_bound);
 
-        const auto white_texture = loadTexture("assets/white.png");
-        const auto black_texture = loadTexture("assets/black.png");
+        const auto white_texture = s_texture_loader["assets/white.png"];
+        const auto black_texture = s_texture_loader["assets/black.png"];
 
         kernel.setHeightTextureUnit(0);
         gl.BindTextureUnit(kernel.getHeightTextureUnit(), black_texture);
@@ -448,9 +523,6 @@ TEST_CASE("GenerationKernel", "[generation][kernel]")
             CHECK(positions == positions_dup);
             CHECK(validity == validity_dup);
         }
-
-        const GLuint textures[] = {white_texture, black_texture};
-        gl.DeleteTextures(2, &textures[0]);
     }
 }
 
