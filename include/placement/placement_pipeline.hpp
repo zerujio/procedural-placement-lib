@@ -106,6 +106,7 @@ namespace placement {
         void m_setCandidateBufferBindingIndex(glutils::GLuint index);
         void m_setIndexBufferBindingIndex(glutils::GLuint index);
         void m_setPositionBufferBindingIndex(glutils::GLuint index);
+        glutils::Buffer::Range m_getResultRange() const;
 
         struct WorldData
         {
@@ -130,24 +131,19 @@ namespace placement {
             [[nodiscard]] glutils::GLsizeiptr getSize() const {return m_size;}
             [[nodiscard]] glutils::GLsizeiptr getCapacity() const {return m_capacity;}
 
-            [[nodiscard]] glutils::BufferRange getCandidateRange() const;
-            [[nodiscard]] glutils::BufferRange getIndexRange() const;
-            [[nodiscard]] glutils::BufferRange getPositionRange() const;
+            [[nodiscard]] glutils::Buffer getBuffer() const;
+            [[nodiscard]] glutils::Buffer::Range getCandidateRange() const;
+            [[nodiscard]] glutils::Buffer::Range getIndexRange() const;
+            [[nodiscard]] glutils::Buffer::Range getPositionRange() const;
 
         private:
             glutils::Guard<glutils::Buffer> m_buffer {};
             glutils::GLsizeiptr m_capacity {0};
             glutils::GLsizeiptr m_size {0};
 
-            struct Range
-            {
-                glutils::GLintptr offset;
-                glutils::GLsizeiptr size;
-            };
-
-            Range m_candidate_range;
-            Range m_index_range;
-            Range m_position_range;
+            glutils::Buffer::Range m_candidate_range;
+            glutils::Buffer::Range m_index_range;
+            glutils::Buffer::Range m_position_range;
 
             static constexpr glutils::GLsizeiptr s_min_capacity = 64;
             static glutils::GLsizeiptr s_calculateSize(glutils::GLsizeiptr capacity);

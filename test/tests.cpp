@@ -554,40 +554,36 @@ TEST_CASE("IndexAssignmentKernel", "[reduction][kernel]")
     using namespace glutils;
 
     Guard<Buffer> buffer;
-    const BufferRange candidate_range {buffer.getHandle(),
-                                       0,
-                                       IndexAssignmentKernel::calculateCandidateBufferSize(candidates.size())};
-    const BufferRange index_range {buffer.getHandle(),
-                                   candidate_range.size,
-                                   IndexAssignmentKernel::calculateIndexBufferSize(candidates.size())};
-    const BufferRange index_sum_range {buffer.getHandle(), index_range.offset, sizeof(GLuint)};
-    const BufferRange index_array_range {buffer.getHandle(),
-                                         index_range.offset + index_sum_range.size,
-                                         index_range.size - index_sum_range.size};
+    const Buffer::Range candidate_range {0, IndexAssignmentKernel::calculateCandidateBufferSize(candidates.size())};
+    const Buffer::Range index_range {candidate_range.size,
+                                     IndexAssignmentKernel::calculateIndexBufferSize(candidates.size())};
+    const Buffer::Range index_sum_range {index_range.offset, sizeof(GLuint)};
+    const Buffer::Range index_array_range {index_range.offset + index_sum_range.size,
+                                           index_range.size - index_sum_range.size};
     const GLsizeiptr buffer_size = candidate_range.size + index_sum_range.size + index_array_range.size;
 
     buffer->allocateImmutable(buffer_size, Buffer::StorageFlags::dynamic_storage);
 
     GLuint computed_sum = 0;
-    index_sum_range.write(&computed_sum); // initialize sum
-    candidate_range.write(candidates.data()); // initialize candidates
+    buffer->write(index_sum_range, &computed_sum);      // initialize sum
+    buffer->write(candidate_range, candidates.data());  // initialize candidates
 
     IndexAssignmentKernel kernel;
     kernel.setCandidateBufferBindingIndex(0);
     kernel.setIndexBufferBindingIndex(1);
 
-    index_range.bindRange(Buffer::IndexedTarget::shader_storage, kernel.getIndexBufferBindingIndex());
-    candidate_range.bindRange(Buffer::IndexedTarget::shader_storage, kernel.getCandidateBufferBindingIndex());
+    buffer->bindRange(Buffer::IndexedTarget::shader_storage, kernel.getIndexBufferBindingIndex(), index_range);
+    buffer->bindRange(Buffer::IndexedTarget::shader_storage, kernel.getCandidateBufferBindingIndex(), candidate_range);
 
     kernel.dispatchCompute(candidates.size());
 
     gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
-    index_sum_range.read(&computed_sum);
+    buffer->read(index_sum_range, &computed_sum);
 
     std::vector<int> computed_indices;
     computed_indices.resize(indices.size());
-    index_array_range.read(computed_indices.data());
+    buffer->read(index_array_range, computed_indices.data());
 
     SECTION("correctness")
     {
@@ -617,7 +613,7 @@ TEST_CASE("IndexAssignmentKernel", "[reduction][kernel]")
     SECTION("determinism")
     {
         GLuint second_computed_sum = 0;
-        index_sum_range.write(&second_computed_sum);
+        buffer->write(index_sum_range, &second_computed_sum);
         kernel.dispatchCompute(candidates.size());
 
         std::set<int> first_computed_set;
@@ -627,14 +623,14 @@ TEST_CASE("IndexAssignmentKernel", "[reduction][kernel]")
 
         gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
-        index_sum_range.read(&second_computed_sum);
+        buffer->read(index_sum_range, &second_computed_sum);
 
         CAPTURE(indices);
         CHECK(computed_sum == second_computed_sum);
 
         std::vector<int> second_computed_indices;
         second_computed_indices.resize(indices.size());
-        index_array_range.read(second_computed_indices.data());
+        buffer->read(index_array_range, second_computed_indices.data());
 
         std::set<int> second_computed_set;
         for (int i : second_computed_indices)
@@ -683,27 +679,29 @@ TEST_CASE("IndexedCopyKernel", "[reduction][kernel]")
     using namespace glutils;
 
     Guard<Buffer> buffer;
-    const BufferRange candidate_range {*buffer, 0, static_cast<GLsizeiptr>(candidates.size() * sizeof(glm::vec4))};
-    const BufferRange position_range {*buffer, candidate_range.size, static_cast<GLsizeiptr>(valid_positions.size() * sizeof(glm::vec4))};
-    const BufferRange index_sum_range {*buffer, position_range.offset + position_range.size, sizeof(unsigned int)};
-    const BufferRange index_array_range {*buffer, index_sum_range.offset + index_sum_range.size, static_cast<GLsizeiptr>(copy_indices.size() * sizeof(GLuint))};
-    const BufferRange index_range {*buffer, index_sum_range.offset, index_sum_range.size + index_array_range.size};
+    const Buffer::Range candidate_range {0, static_cast<GLsizeiptr>(candidates.size() * sizeof(glm::vec4))};
+    const Buffer::Range position_range {candidate_range.size,
+                                        static_cast<GLsizeiptr>(valid_positions.size() * sizeof(glm::vec4))};
+    const Buffer::Range index_sum_range {position_range.offset + position_range.size, sizeof(unsigned int)};
+    const Buffer::Range index_array_range {index_sum_range.offset + index_sum_range.size,
+                                           static_cast<GLsizeiptr>(copy_indices.size() * sizeof(GLuint))};
+    const Buffer::Range index_range {index_sum_range.offset, index_sum_range.size + index_array_range.size};
 
     buffer->allocateImmutable(candidate_range.size + position_range.size + index_range.size,
                               Buffer::StorageFlags::dynamic_storage | Buffer::StorageFlags::map_read);
 
-    candidate_range.write(candidates.data());
-    index_sum_range.write(&index_sum);
-    index_array_range.write(copy_indices.data());
+    buffer->write(candidate_range, candidates.data());
+    buffer->write(index_sum_range, &index_sum);
+    buffer->write(index_array_range, copy_indices.data());
 
     IndexedCopyKernel kernel;
     kernel.setCandidateBufferBindingIndex(0);
     kernel.setPositionBufferBindingIndex(1);
     kernel.setIndexBufferBindingIndex(2);
 
-    candidate_range.bindRange(Buffer::IndexedTarget::shader_storage, kernel.getCandidateBufferBindingIndex());
-    position_range.bindRange(Buffer::IndexedTarget::shader_storage, kernel.getPositionBufferBindingIndex());
-    index_range.bindRange(Buffer::IndexedTarget::shader_storage, kernel.getIndexBufferBindingIndex());
+    buffer->bindRange(Buffer::IndexedTarget::shader_storage, kernel.getCandidateBufferBindingIndex(), candidate_range);
+    buffer->bindRange(Buffer::IndexedTarget::shader_storage, kernel.getPositionBufferBindingIndex(), position_range);
+    buffer->bindRange(Buffer::IndexedTarget::shader_storage, kernel.getIndexBufferBindingIndex(), index_range);
 
     kernel.dispatchCompute(candidates.size());
 
@@ -711,7 +709,7 @@ TEST_CASE("IndexedCopyKernel", "[reduction][kernel]")
 
     std::vector<glm::vec3> copied_positions;
     copied_positions.reserve(valid_positions.size());
-    auto mapped_ptr = static_cast<glm::vec4*>(position_range.map(Buffer::AccessFlags::read));
+    auto mapped_ptr = static_cast<glm::vec4*>(buffer->mapRange(position_range, Buffer::AccessFlags::read));
 
     REQUIRE(mapped_ptr);
 

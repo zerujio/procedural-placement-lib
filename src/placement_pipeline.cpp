@@ -64,8 +64,9 @@ namespace placement {
         m_buffer.resize(candidate_count);
 
         // generate positions
-        m_buffer.getCandidateRange().bindRange(glutils::Buffer::IndexedTarget::shader_storage,
-                                               m_generation_kernel.getCandidateBufferBindingIndex());
+        m_buffer.getBuffer().bindRange(glutils::Buffer::IndexedTarget::shader_storage,
+                                       m_generation_kernel.getCandidateBufferBindingIndex(),
+                                       m_buffer.getCandidateRange());
 
         m_generation_kernel.dispatchCompute();
 
@@ -73,23 +74,25 @@ namespace placement {
         auto count_range = m_buffer.getIndexRange();
         count_range.size = static_cast<GLsizeiptr>(sizeof(unsigned int));
         m_valid_count = 0;
-        count_range.write(&m_valid_count);
+        m_buffer.getBuffer().write(count_range, &m_valid_count);
 
-        m_buffer.getIndexRange().bindRange(glutils::Buffer::IndexedTarget::shader_storage,
-                                           m_assignment_kernel.getIndexBufferBindingIndex());
+        m_buffer.getBuffer().bindRange(glutils::Buffer::IndexedTarget::shader_storage,
+                                       m_assignment_kernel.getIndexBufferBindingIndex(),
+                                       m_buffer.getIndexRange());
 
         gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         m_assignment_kernel.dispatchCompute(candidate_count);
 
         // copy valid candidates
-        m_buffer.getPositionRange().bindRange(glutils::Buffer::IndexedTarget::shader_storage,
-                                              m_copy_kernel.getPositionBufferBindingIndex());
+        m_buffer.getBuffer().bindRange(glutils::Buffer::IndexedTarget::shader_storage,
+                                       m_copy_kernel.getPositionBufferBindingIndex(),
+                                       m_buffer.getPositionRange());
 
         gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         m_copy_kernel.dispatchCompute(candidate_count);
 
         // read valid candidate count
-        count_range.read(&m_valid_count);
+        m_buffer.getBuffer().read(count_range, &m_valid_count);
     }
 
     void PlacementPipeline::setBaseTextureUnit(glutils::GLuint index) {
@@ -125,18 +128,24 @@ namespace placement {
         std::vector<glm::vec3> positions;
         positions.reserve(m_valid_count);
 
-        auto gpu_positions = static_cast<const glm::vec4*>(m_buffer.getPositionRange().map(glutils::Buffer::AccessFlags::read));
+        auto gpu_positions = static_cast<const glm::vec4*>(m_buffer.getBuffer().mapRange(m_buffer.getPositionRange(),
+                                                                                         glutils::Buffer::AccessFlags::read));
         for (GLintptr i = 0; i < m_valid_count; i++)
             positions.emplace_back(gpu_positions[i]);
 
-        m_buffer.getPositionRange().buffer.unmap();
+        m_buffer.getBuffer().unmap();
 
         return positions;
     }
 
     void PlacementPipeline::copyResultsToGPUBuffer(glutils::GLuint buffer, glutils::GLsizeiptr offset) const {
-        const auto range = m_buffer.getPositionRange();
-        gl.CopyNamedBufferSubData(range.buffer.getName(), buffer, range.offset, offset, range.size);
+        const auto range = m_getResultRange();
+        gl.CopyNamedBufferSubData(m_buffer.getBuffer().getName(), buffer, range.offset, offset, range.size);
+    }
+
+    glutils::Buffer::Range PlacementPipeline::m_getResultRange() const {
+        return {m_buffer.getPositionRange().offset,
+                static_cast<GLsizeiptr>(m_valid_count * sizeof(glm::vec4))};
     }
 
     glutils::GLsizeiptr PlacementPipeline::Buffer::s_calculateSize(glutils::GLsizeiptr capacity)
@@ -146,27 +155,27 @@ namespace placement {
                + IndexedCopyKernel::calculatePositionBufferSize(capacity);
     }
 
-    glutils::BufferRange PlacementPipeline::Buffer::getCandidateRange() const
+    glutils::Buffer::Range PlacementPipeline::Buffer::getCandidateRange() const
     {
-        return {*m_buffer, m_candidate_range.offset, m_candidate_range.size};
+        return m_candidate_range;
     }
 
-    glutils::BufferRange PlacementPipeline::Buffer::getIndexRange() const
+    glutils::Buffer::Range PlacementPipeline::Buffer::getIndexRange() const
     {
-        return {*m_buffer, m_index_range.offset, m_candidate_range.size};
+        return m_index_range;
     }
 
-    glutils::BufferRange PlacementPipeline::Buffer::getPositionRange() const
+    glutils::Buffer::Range PlacementPipeline::Buffer::getPositionRange() const
     {
-        return {*m_buffer, m_position_range.offset, m_position_range.size};
+        return m_position_range;
     }
 
     class PlacementPipeline::Buffer::Allocator
     {
     public:
-        Range allocate(GLsizeiptr size)
+        glutils::Buffer::Range allocate(GLsizeiptr size)
         {
-            const Range r {offset, size};
+            const glutils::Buffer::Range r {offset, size};
             offset += size;
             return r;
         }
@@ -198,5 +207,9 @@ namespace placement {
 
         m_buffer->allocate(new_buffer_size, glutils::Buffer::Usage::dynamic_read);
         m_capacity = new_buffer_size;
+    }
+
+    glutils::Buffer PlacementPipeline::Buffer::getBuffer() const {
+        return m_buffer.getHandle();
     }
 } // placement
