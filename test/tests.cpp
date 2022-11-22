@@ -371,6 +371,34 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
             }
         }
     }
+
+    SECTION("CPU/GPU read")
+    {
+        pipeline.computePlacement(footprint, lower_bound, upper_bound);
+
+        std::vector<glm::vec3> gpu_results;
+        gpu_results.reserve(pipeline.getResultsSize());
+
+        using namespace glutils;
+        Guard<Buffer> buffer;
+        const auto buffer_size = static_cast<GLsizeiptr>(pipeline.getResultsSize() * sizeof(glm::vec4));
+        buffer->allocateImmutable(buffer_size, Buffer::StorageFlags::map_read);
+
+        pipeline.copyResultsToGPUBuffer(buffer->getName(), 0);
+
+        {
+            auto mapped_ptr = static_cast<const glm::vec4*>(buffer->map(Buffer::AccessMode::read_only));
+            REQUIRE(mapped_ptr);
+            for (auto ptr = mapped_ptr; ptr - mapped_ptr < pipeline.getResultsSize(); ptr++)
+                gpu_results.emplace_back(*ptr);
+            buffer->unmap();
+        }
+
+        const auto cpu_results = pipeline.copyResultsToCPU();
+        REQUIRE(cpu_results.size() == pipeline.getResultsSize());
+
+        CHECK(gpu_results == cpu_results);
+    }
 }
 
 TEMPLATE_TEST_CASE("Common PlacementPipelineKernel operations", "[kernel][pipeline]", GenerationKernel, IndexAssignmentKernel, IndexedCopyKernel)
