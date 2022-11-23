@@ -31,18 +31,25 @@ namespace placement {
         .name = "u_world_scale"
     };
 
-    static const Definition norm_footprint_def {
+    static const Definition norm_factor_def {
         .layout{.location=3},
         .storage = StorageQualifier::uniform,
         .type = Type::vec2_,
-        .name = "u_norm_footprint"
+        .name = "u_norm_factor"
     };
 
-    static const Definition grid_offset_def {
+    static const Definition work_group_offset_def {
         .layout{.location=4},
         .storage = StorageQualifier::uniform,
         .type = Type::uvec2_,
-        .name = "u_grid_offset"
+        .name = "u_work_group_offset"
+    };
+
+    static const Definition position_stencil_def {
+        .layout{.location=5},
+        .storage = StorageQualifier::uniform,
+        .type = Type::vec2_,
+        .name = "u_position_stencil[gl_WorkGroupSize.x][gl_WorkGroupSize.y]"
     };
 
     static const Definition height_tex_def {
@@ -58,17 +65,19 @@ namespace placement {
     };
 
     const std::string GenerationKernel::s_source_string = (std::ostringstream()
-        << "#version 450 core\n"
-        << "layout(local_size_x = " << GenerationKernel::s_work_group_size.x
-                << ", local_size_y = " << GenerationKernel::s_work_group_size.y << ") in;\n"
-        << lower_bound_def << "\n"
-        << upper_bound_def << "\n"
-        << world_scale_def << "\n"
-        << norm_footprint_def << "\n"
-        << grid_offset_def << "\n"
-        << height_tex_def << "\n"
-        << density_tex_def << "\n"
+            << "#version 450 core\n"
+            << "layout(local_size_x = " << GenerationKernel::work_group_size.x
+            << ", local_size_y = " << GenerationKernel::work_group_size.y << ") in;"
+            << "\n" << lower_bound_def
+            << "\n" << upper_bound_def
+            << "\n" << world_scale_def
+            << "\n" << norm_factor_def
+            << "\n" << work_group_offset_def
+            << "\n" << position_stencil_def
+            << "\n" << height_tex_def
+            << "\n" << density_tex_def
         << R"glsl(
+
 struct Candidate
 {
     vec3 position;
@@ -98,7 +107,12 @@ void main()
     const uint group_index = gl_WorkGroupID.x + gl_WorkGroupID.y * gl_NumWorkGroups.x;
 
     // position
-    const vec2 tex_coord = (gl_GlobalInvocationID.xy + u_grid_offset) * u_norm_footprint * 2.0f;
+    const vec2 base_tex_coord = gl_WorkGroupID.xy * gl_WorkGroupSize.xy;
+
+    const vec2 tex_coord = ((gl_WorkGroupID.xy + u_work_group_offset) * gl_WorkGroupSize.xy
+                              + u_position_stencil[gl_LocalInvocationID.x][gl_LocalInvocationID.y])
+                            * u_norm_factor;
+
     const float norm_height = texture(u_heightmap, tex_coord).x;
     const vec3 position = vec3(tex_coord.x, norm_height, tex_coord.y) * u_world_scale;
 
@@ -123,12 +137,6 @@ void main()
     glutils::GLsizeiptr GenerationKernel::setArgs(const glm::vec3 &world_scale, float footprint, glm::vec2 lower_bound,
                                                   glm::vec2 upper_bound)
     {
-        // footprint
-        {
-            const auto norm_footprint = glm::vec2(footprint) / glm::vec2(world_scale.x, world_scale.z);
-            setUniform(norm_footprint_def.layout.location, norm_footprint);
-        }
-
         // world scale
         setUniform(world_scale_def.layout.location, world_scale);
 
@@ -136,15 +144,27 @@ void main()
         setUniform(lower_bound_def.layout.location, lower_bound);
         setUniform(upper_bound_def.layout.location, upper_bound);
 
-        // grid offset
+        // 0.5 * work_group_scale = 2 * footprint
+        const glm::vec2 work_group_scale {4.0f * footprint};
+
+        // normalization factor
         {
-            const glm::uvec2 grid_offset {lower_bound / (2.0f * footprint)};
-            setUniform(grid_offset_def.layout.location, grid_offset);
+            const auto norm_factor = work_group_scale / glm::vec2(world_scale.x, world_scale.z);
+            setUniform(norm_factor_def.layout.location, norm_factor);
         }
 
-        m_num_work_groups = m_calculateNumWorkGroups(footprint, lower_bound, upper_bound);
+        const glm::vec2 work_group_bounds = glm::vec2(work_group_size) * work_group_scale;
 
-        return calculateCandidateCount();
+        // work group offset
+        {
+            const glm::uvec2 offset {lower_bound / work_group_bounds};
+            setUniform(work_group_offset_def.layout.location, offset);
+        }
+
+        m_num_work_groups = glm::uvec2((upper_bound - lower_bound) / work_group_bounds) + 1u;
+
+        const auto num_candidates = m_num_work_groups * work_group_size;
+        return num_candidates.x * num_candidates.y;
     }
 
     void GenerationKernel::dispatchCompute() const
@@ -153,12 +173,19 @@ void main()
         gl.DispatchCompute(m_num_work_groups.x, m_num_work_groups.y, 1);
     }
 
-    auto GenerationKernel::m_calculateNumWorkGroups(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound)
-    -> glm::uvec2
+    void GenerationKernel::setPositionStencil(
+            const std::array<std::array<glm::vec2, work_group_size.y>, work_group_size.x> &positions)
     {
-        const glm::uvec2 min_invocations {(upper_bound - lower_bound) / (2.0f * footprint)};
-        return min_invocations / s_work_group_size + 1u;
-    }
+        auto location = position_stencil_def.layout.location;
 
+        if (location < 0)
+            return;
+
+        for (const auto& sub_array : positions)
+        {
+            setUniform(location, work_group_size.y, sub_array.data());
+            location += work_group_size.y;
+        }
+    }
 
 } // placement

@@ -296,14 +296,14 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
     const float footprint = GENERATE(take(3, random(0.01f, 0.1f)));
     INFO("footprint = " << footprint);
 
-    const float boundary_offset_x = GENERATE(take(3, random(0.f, 0.8f)));
-    const float boundary_offset_y = GENERATE(take(3, random(0.f, 0.8f)));
+    const float boundary_offset_x = GENERATE(take(3, random(0.f, 0.4f)));
+    const float boundary_offset_y = GENERATE(take(3, random(0.f, 0.4f)));
     const glm::vec2 lower_bound(boundary_offset_x, boundary_offset_y);
 
     INFO("lower_bound = " << lower_bound);
 
-    const float boundary_size_x = GENERATE(take(3, random(0.2f, 1.0f)));
-    const float boundary_size_y = GENERATE(take(3, random(0.2f, 1.0f)));
+    const float boundary_size_x = GENERATE(take(3, random(0.6f, 1.0f)));
+    const float boundary_size_y = GENERATE(take(3, random(0.6f, 1.0f)));
     const glm::vec2 upper_bound = lower_bound + glm::vec2(boundary_size_x, boundary_size_y);
 
     INFO("upper_bound = " << upper_bound);
@@ -376,6 +376,8 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
     {
         pipeline.computePlacement(footprint, lower_bound, upper_bound);
 
+        REQUIRE(pipeline.getResultsSize());
+
         std::vector<glm::vec3> gpu_results;
         gpu_results.reserve(pipeline.getResultsSize());
 
@@ -432,6 +434,13 @@ TEST_CASE("GenerationKernel", "[generation][kernel]")
 
     SECTION("correctness")
     {
+        GenerationKernel::PositionStencilMatrix position_stencil;
+        for (auto i = 0u; i < position_stencil.size(); i++)
+            for (auto j = 0u; j < position_stencil.front().size(); j++)
+                position_stencil[i][j] = glm::vec2(i, j);
+        kernel.setPositionStencil(position_stencil);
+
+
         const glm::vec3 world_scale {1.0f};
 
         const auto footprint = GENERATE(take(3, random(0.0f, 0.5f)));

@@ -66,7 +66,7 @@ namespace placement {
          * @brief set the seed for the random number generator.
          * For a given set of heightmap, densitymap and world scale, the random seed completely determines placement.
          */
-        void setRandomSeed() const;
+        void setRandomSeed(uint seed);
 
         /// The number of different texture units used by the placement compute shaders
         static constexpr auto required_texture_units = 2u;

@@ -104,6 +104,7 @@ int main()
     pipeline.setDensityTexture(densitymap);
     pipeline.setHeightTexture(heightmap);
     pipeline.setWorldScale({1.f, 1.f, 1.f});
+    pipeline.setRandomSeed(89581751);
 
     pipeline.computePlacement(0.001f, glm::vec2(0.f), glm::vec2(1.f));
 
