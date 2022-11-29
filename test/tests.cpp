@@ -1,5 +1,6 @@
 #include "placement/placement.hpp"
 #include "placement/placement_pipeline.hpp"
+#include "../src/disk_distribution_generator.hpp"
 
 #include "glutils/debug.hpp"
 
@@ -437,9 +438,9 @@ TEST_CASE("GenerationKernel", "[generation][kernel]")
         GenerationKernel::PositionStencilMatrix position_stencil;
         for (auto i = 0u; i < position_stencil.size(); i++)
             for (auto j = 0u; j < position_stencil.front().size(); j++)
-                position_stencil[i][j] = glm::vec2(i, j);
-        kernel.setPositionStencil(position_stencil);
+                position_stencil[i][j] = glm::vec2(i, j) * GenerationKernel::s_work_group_scale;
 
+        kernel.setPositionStencil(position_stencil);
 
         const glm::vec3 world_scale {1.0f};
 
@@ -517,8 +518,10 @@ TEST_CASE("GenerationKernel", "[generation][kernel]")
             for (int i = 0; i < candidate_count; i++)
             {
                 INFO("i = " << i);
+                CAPTURE(candidates[i].position);
                 for (int j = 0; j < i; j++)
                 {
+                    CAPTURE(candidates[j].position);
                     INFO("j = " << j);
                     CHECK(glm::length(candidates[i].position - candidates[j].position) >= Approx(2 * footprint));
                 }
@@ -756,4 +759,48 @@ TEST_CASE("IndexedCopyKernel", "[reduction][kernel]")
     buffer->unmap();
 
     CHECK(valid_positions == copied_positions);
+}
+
+TEST_CASE("DiskDistributionGenerator")
+{
+    float x_bounds = GENERATE(take(5, random(10.0f, 100.0f)));
+    float y_bounds = GENERATE(take(5, random(10.0f, 100.0f)));
+    float footprint = GENERATE(take(5, random(0.001f, 1.0f)));
+
+    DiskDistributionGenerator generator (footprint, {x_bounds, y_bounds});
+
+    SECTION("trivial case")
+    {
+        glm::vec2 pos;
+        REQUIRE_NOTHROW(pos = generator.generate());
+        CHECK(pos.x <= x_bounds);
+        CHECK(pos.x >= 0.0f);
+        CHECK(pos.y <= y_bounds);
+        CHECK(pos.y >= 0.0f);
+    }
+
+    SECTION("minimum distance")
+    {
+        std::vector<glm::vec2> generated;
+        for (int i = 0; i < int(x_bounds); i++)
+        {
+            glm::vec2 position;
+            REQUIRE_NOTHROW(position = generator.generate());
+            for (const auto& other : generated)
+                CHECK(glm::distance(position, other) > 2 * footprint);
+        }
+    }
+
+    SECTION("bounds")
+    {
+        for (int i = 0; i < int(x_bounds); i++)
+        {
+            glm::vec2 position;
+            REQUIRE_NOTHROW(position = generator.generate());
+            CHECK(position.x <= x_bounds);
+            CHECK(position.x >= 0.0f);
+            CHECK(position.y <= y_bounds);
+            CHECK(position.y >= 0.0f);
+        }
+    }
 }

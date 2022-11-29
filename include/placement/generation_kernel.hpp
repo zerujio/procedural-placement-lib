@@ -75,6 +75,8 @@ namespace placement {
         /// Execute the kernel using the previously set arguments.
         void dispatchCompute() const;
 
+        static constexpr glm::vec2 s_work_group_scale {3.5f};
+
     private:
         /// shader source code
         static const std::string s_source_string;

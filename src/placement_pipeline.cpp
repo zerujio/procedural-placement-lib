@@ -1,11 +1,11 @@
 #include "placement/placement_pipeline.hpp"
 #include "gl_context.hpp"
+#include "disk_distribution_generator.hpp"
 
 #include "glutils/guard.hpp"
 #include "glutils/buffer.hpp"
 
 #include <stdexcept>
-#include <random>
 
 namespace placement {
 
@@ -160,87 +160,18 @@ glutils::Buffer::Range PlacementPipeline::m_getResultRange() const
             static_cast<GLsizeiptr>(m_valid_count * sizeof(glm::vec4))};
 }
 
-
-template<std::size_t N, std::size_t M>
-class Grid
-{
-public:
-    Grid(glm::vec2 inv_cell_size) : m_inv_cell_size(inv_cell_size)
-    {
-        for (auto& col : m_grid)
-            col.fill(nullptr);
-    }
-
-    [[nodiscard]] glm::uvec2 findCell(glm::vec2 position) const
-    {
-        return glm::uvec2(position * m_inv_cell_size) % s_size;
-    }
-
-    bool insert(const glm::vec2& new_position)
-    {
-        const glm::ivec2 cell = findCell(new_position);
-
-        if (m_grid[cell.x][cell.y]) // cell is already occupied
-            return false;
-
-        for (int i = -1; i <= 1; i++)
-        {
-            uint adj_x = (s_size.x + cell.x + i) % s_size.x; // wrap around
-            for (int j = -1; j <= 1; j++)
-            {
-                if (i == 0 && j == 0)
-                    continue;
-
-                uint adj_y = (s_size.y + cell.y + j) % s_size.y;
-
-                auto adj = m_grid[adj_x][adj_y];
-
-                // check collision
-                if (adj && glm::distance(*adj, new_position) <= 1.0f)
-                    return false;
-            }
-        }
-
-        m_grid[cell.x][cell.y] = &new_position;
-        return true;
-    }
-private:
-    static constexpr glm::uvec2 s_size {N, M};
-
-    glm::vec2 m_inv_cell_size;
-    std::array<std::array<const glm::vec2*, M>, N> m_grid;
-};
-
 void PlacementPipeline::setRandomSeed(uint seed)
 {
-    constexpr float sqrt2 = 1.41421f;
-
-    // dart throwing algorithm for poisson disk distribution
-
-    // subdivide space into cells of side = L / sqrt(2), where L is the minimum distance between points
-    // L = 2 * footprint = 1/2 -> norm footprint = 1/4
-    // -> cell_size = (1/2) / sqrt(2) = 1 / (2 * sqrt(2))
     constexpr auto wg_size = GenerationKernel::work_group_size;
-    constexpr glm::vec2 norm_bounds {wg_size};
-    constexpr glm::vec2 inv_cell_size {2.0f * sqrt2}; // = 1/cell_size
-    constexpr glm::uvec2 cell_count = norm_bounds * inv_cell_size;
+    // dart throwing algorithm for poisson disk distribution
+    DiskDistributionGenerator generator {1.0f, glm::vec2(wg_size) * GenerationKernel::s_work_group_scale};
+    generator.setSeed(seed);
 
-    Grid<cell_count.x, cell_count.y> grid {inv_cell_size};
     std::array<std::array<glm::vec2, wg_size.y>, wg_size.x> positions;
-
-    std::default_random_engine random_engine(seed);
-    std::uniform_real_distribution x_dist(0.0f, norm_bounds.x);
-    std::uniform_real_distribution y_dist(0.0f, norm_bounds.y);
 
     for (uint i = 0; i < wg_size.x; i++)
         for (uint j = 0; j < wg_size.y; j++)
-        {
-            auto& new_pos = positions[i][j];
-            do {
-                new_pos.x = x_dist(random_engine);
-                new_pos.y = y_dist(random_engine);
-            } while (!grid.insert(new_pos));
-        }
+            positions[i][j] = generator.generate();
 
     m_generation_kernel.setPositionStencil(positions);
 }
