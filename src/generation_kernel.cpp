@@ -159,7 +159,6 @@ glutils::GLsizeiptr GenerationKernel::setArgs(const glm::vec3 &world_scale, floa
         setUniform(norm_factor_def.layout.location, norm_factor);
     }
 
-    // 0.5 * work_group_scale = 2 * footprint
     const glm::vec2 work_group_footprint = glm::vec2(work_group_size) * s_work_group_scale * footprint;
 
     // work group offset

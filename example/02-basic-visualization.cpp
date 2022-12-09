@@ -103,10 +103,10 @@ int main()
     placement::PlacementPipeline pipeline;
     pipeline.setDensityTexture(densitymap);
     pipeline.setHeightTexture(heightmap);
-    pipeline.setWorldScale({1.f, 1.f, 1.f});
+    pipeline.setWorldScale({1.f, 1.f, -1.f});
     pipeline.setRandomSeed(89581751);
 
-    pipeline.computePlacement(0.001f, glm::vec2(0.f), glm::vec2(1.f));
+    pipeline.computePlacement(0.001f, glm::vec2(0.0f), glm::vec2(1.0f));
 
     // copy results between gpu buffers
     using namespace glutils;

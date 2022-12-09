@@ -4,64 +4,89 @@
 
 #include <stdexcept>
 #include <array>
+#include <algorithm>
 
 namespace placement {
 
-DiskDistributionGrid::DiskDistributionGrid(float radius, glm::vec2 size) :
-    m_diameter(2 * radius),
-    m_bounds(size),
-    m_grid_size(glm::uvec2 (size * sqrt2 / m_diameter) + 1u)
+DiskDistributionGrid::DiskDistributionGrid(float radius, glm::uvec2 size) :
+        m_disk_diameter(2 * radius),
+        m_grid_size(size)
 {
-    if (size.x <= 0.0f || size.y <= 0.0f)
-        throw std::logic_error("size must be >= 0"); // TODO: swap this for some other error type
-
-    m_grid.resize(m_grid_size.x * m_grid_size.y, glm::vec2(-1.0f));
+    m_grid.resize(m_grid_size.x * m_grid_size.y, invalid_index);
 }
 
-glm::uvec2 DiskDistributionGrid::m_findCellIndex(glm::vec2 position) const
+glm::uvec2 DiskDistributionGrid::getCellIndex(glm::vec2 position) const
 {
-    if (glm::any(glm::lessThan(position, glm::vec2(0.0f))) || glm::any(glm::greaterThan(position, m_bounds)))
-        throw std::logic_error("position out of bounds");
-
-    return {position * sqrt2 / m_diameter};
+    return {position * glm::sqrt(2.0f) / m_disk_diameter};
 }
 
-glm::vec2 &DiskDistributionGrid::m_getCellValue(glm::uvec2 index)
+std::optional<glm::vec2> DiskDistributionGrid::get(glm::uvec2 cell_index) const
+{
+    if (glm::any(glm::greaterThanEqual(cell_index, m_grid_size)))
+        throw std::logic_error("cell index out of bounds");
+
+    const auto index = m_gridCell(cell_index);
+
+    if (index == invalid_index)
+        return {};
+    else
+        return {m_positions[index]};
+}
+
+std::size_t& DiskDistributionGrid::m_gridCell(glm::uvec2 index)
 {
     return m_grid[index.x + index.y * m_grid_size.x];
 }
 
-const glm::vec2 &DiskDistributionGrid::m_getCellValue(glm::uvec2 index) const
+const std::size_t& DiskDistributionGrid::m_gridCell(glm::uvec2 index) const
 {
     return m_grid[index.x + index.y * m_grid_size.x];
 }
 
-bool DiskDistributionGrid::m_collides(glm::vec2 position, glm::uvec2 cell) const
+bool DiskDistributionGrid::collides(glm::vec2 position, glm::uvec2 cell_index, glm::ivec2 index_offset) const
 {
-    const auto& cell_position = m_getCellValue(cell);
+    const glm::ivec2 offset_cell = glm::ivec2(cell_index) + index_offset;
 
-    if (cell_position.x < 0.0f || cell_position.y < 0.0f)
+    const glm::ivec2 wrapped_cell = offset_cell % glm::ivec2(m_grid_size);
+    const glm::uvec2 collision_cell = glm::uvec2(wrapped_cell) + glm::uvec2(glm::lessThan(wrapped_cell, glm::ivec2(0))) * m_grid_size;
+
+    const auto other_position = get(collision_cell);
+
+    // check if cell is empty
+    if (!other_position)
         return false;
 
-    return glm::distance(cell_position, position) <= m_diameter;
+    // the grid repeats. (grid_size, 1) is the same as (0, 1) offset by the length of the grid along the X dimension.
+    const glm::vec2 position_offset = glm::floor(glm::vec2(offset_cell) / glm::vec2(m_grid_size))
+                                    * glm::vec2(m_grid_size) * m_disk_diameter / glm::sqrt(2.0f);
+
+    return glm::distance(other_position.value() + position_offset, position) <= m_disk_diameter;
 }
 
 bool DiskDistributionGrid::tryInsert(glm::vec2 position)
 {
-    const auto cell = m_findCellIndex(position);
+    const auto cell_index = getCellIndex(position);
 
-    for (int dx = -1; dx <= 1; dx++)
-    {
-        const uint x = dx >= 0 ? (cell.x + dx) % m_grid_size.x : (m_grid_size.x + cell.x - 1) % m_grid_size.x;
-        for (int dy = -1; dy <= 1; dy++)
+    // insertion fails if cell is not empty
+    if (get(cell_index))
+        return false;
+
+    for (int dx = -2; dx <= 2; dx++)
+        for (int dy = -2; dy <= 2; dy++)
         {
-            const uint y = dy >= 0 ? (cell.y + dy) % m_grid_size.y : (m_grid_size.y + cell.y - 1) % m_grid_size.y;
-            if (m_collides(position, {x, y}))
+            const glm::ivec2 offset {dx, dy};
+
+            if (offset == glm::ivec2(0) || glm::abs(offset) == glm::ivec2(2))
+                continue;
+
+            if (collides(position, cell_index, offset))
                 return false;
         }
-    }
 
-    m_getCellValue(cell) = position;
+    // insert element
+    m_gridCell(cell_index) = m_positions.size();
+    m_positions.emplace_back(position);
+
     return true;
 }
 
@@ -76,4 +101,5 @@ glm::vec2 DiskDistributionGenerator::generate()
 
     throw std::runtime_error("maximum insertion attempts exceeded");
 }
+
 } // placement

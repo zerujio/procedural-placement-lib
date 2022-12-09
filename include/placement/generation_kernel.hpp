@@ -75,9 +75,11 @@ namespace placement {
         /// Execute the kernel using the previously set arguments.
         void dispatchCompute() const;
 
-        static constexpr glm::vec2 s_work_group_scale {3.5f};
+        static constexpr glm::uvec2 s_spacing_factor {3u};
+        static constexpr glm::vec2 s_work_group_scale {glm::vec2(s_spacing_factor) * 2.0f / /*sqrt(2)*/ 1.41421f};
 
     private:
+
         /// shader source code
         static const std::string s_source_string;
 

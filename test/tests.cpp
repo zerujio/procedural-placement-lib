@@ -242,24 +242,15 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
         CHECK(points.empty());
     }
 
-    SECTION("Placement with space for a single object")
+    SECTION("Placement with one work group")
     {
-        const auto bounds = GENERATE(std::make_pair(glm::vec2{0.0f, 0.0f}, glm::vec2{1.0f, 1.0f}),
-                                     std::make_pair(glm::vec2(1.5f, 1.5f), glm::vec2{2.5f, 2.5f}));
-        const auto& lower_bound = bounds.first;
-        const auto& upper_bound = bounds.second;
-
-        pipeline.computePlacement(0.5f, lower_bound, upper_bound);
-
-        REQUIRE(pipeline.getResultsSize() == 1);
-
+        const glm::vec2 scale = GenerationKernel::s_work_group_scale * glm::vec2(GenerationKernel::work_group_size);
+        pipeline.setWorldScale({scale.x, 1.0f, scale.y});
+        pipeline.computePlacement(1.0f, {0.0f, 0.0f}, scale);
         const auto points = pipeline.copyResultsToCPU();
 
-        const auto& point = points.front();
-        CHECK(point.x >= lower_bound.x);
-        CHECK(point.z >= lower_bound.y);
-        CHECK(point.x < upper_bound.x);
-        CHECK(point.z < upper_bound.y);
+        CAPTURE(scale);
+        CHECK(points.size() == GenerationKernel::work_group_size.x * GenerationKernel::work_group_size.y);
     }
 
     SECTION("Determinism (simple)")
@@ -763,44 +754,117 @@ TEST_CASE("IndexedCopyKernel", "[reduction][kernel]")
 
 TEST_CASE("DiskDistributionGenerator")
 {
-    float x_bounds = GENERATE(take(5, random(10.0f, 100.0f)));
-    float y_bounds = GENERATE(take(5, random(10.0f, 100.0f)));
-    float footprint = GENERATE(take(5, random(0.001f, 1.0f)));
+    const uint seed = GENERATE(take(10, random(0u, -1u)));
+    CAPTURE(seed);
 
-    DiskDistributionGenerator generator (footprint, {x_bounds, y_bounds});
-
-    SECTION("trivial case")
+    auto checkCollision = [](glm::vec2 p, glm::vec2 q, glm::vec2 bounds, float footprint)
     {
-        glm::vec2 pos;
-        REQUIRE_NOTHROW(pos = generator.generate());
-        CHECK(pos.x <= x_bounds);
-        CHECK(pos.x >= 0.0f);
-        CHECK(pos.y <= y_bounds);
-        CHECK(pos.y >= 0.0f);
-    }
+        for (int dx = -1; dx <= 1; dx++)
+            for (int dy = -1; dy <= 1; dy++)
+            {
+                const glm::ivec2 tile_offset {dx, dy};
+                const glm::vec2 offset = glm::vec2(tile_offset) * bounds;
 
-    SECTION("minimum distance")
+                CHECK(glm::distance(p, q + offset) >= Approx(2.0f * footprint));
+            }
+    };
+
+    SECTION("GenerationKernel usage")
     {
-        std::vector<glm::vec2> generated;
-        for (int i = 0; i < int(x_bounds); i++)
+        constexpr auto wg_size = GenerationKernel::work_group_size;
+        CAPTURE(wg_size);
+
+        DiskDistributionGenerator generator {1.0f, wg_size * GenerationKernel::s_spacing_factor};
+        generator.setSeed(seed);
+        generator.setMaxAttempts(100);
+
+        const auto bounds = glm::vec2(wg_size) * GenerationKernel::s_work_group_scale;
+        CAPTURE(bounds);
+
+        for (std::size_t i = 0; i < 64; i++)
         {
-            glm::vec2 position;
-            REQUIRE_NOTHROW(position = generator.generate());
-            for (const auto& other : generated)
-                CHECK(glm::distance(position, other) > 2 * footprint);
+            CAPTURE(i);
+            REQUIRE_NOTHROW(generator.generate());
+        }
+
+        const auto& positions = generator.getPositions();
+
+        for (auto p = positions.begin(); p != positions.end(); p++)
+        {
+            CAPTURE(*p, p - positions.begin());
+            CHECK(p->x >= 0.0f);
+            CHECK(p->y >= 0.0f);
+            CHECK(p->x <= bounds.x);
+            CHECK(p->y <= bounds.y);
+
+            for (auto q = positions.begin(); q != p; q++)
+            {
+                CAPTURE(*q, q - positions.begin());
+                if (p != q)
+                    checkCollision(*p, *q, bounds, 1.0f);
+            }
         }
     }
 
-    SECTION("bounds")
+    SECTION("randomized")
     {
-        for (int i = 0; i < int(x_bounds); i++)
+        const unsigned int x_cell_count = GENERATE(take(3, random(10u, 100u)));
+        const unsigned int y_cell_count = GENERATE(take(3, random(10u, 100u)));
+        const glm::uvec2 grid_size {x_cell_count, y_cell_count};
+
+        const float footprint = GENERATE(take(3, random(0.001f, 1.0f)));
+
+        const glm::vec2 bounds = glm::vec2(x_cell_count, y_cell_count) * 2.0f * footprint / std::sqrt(2.0f);
+
+        CAPTURE(grid_size, bounds);
+
+        SECTION("DiskDistributionGrid::getBounds()")
         {
-            glm::vec2 position;
-            REQUIRE_NOTHROW(position = generator.generate());
-            CHECK(position.x <= x_bounds);
-            CHECK(position.x >= 0.0f);
-            CHECK(position.y <= y_bounds);
-            CHECK(position.y >= 0.0f);
+            DiskDistributionGrid grid {footprint, grid_size};
+            CHECK(grid.getBounds() == bounds);
+        }
+
+        DiskDistributionGenerator generator (footprint, {x_cell_count, y_cell_count});
+        generator.setMaxAttempts(100);
+
+        SECTION("trivial case")
+        {
+            glm::vec2 pos;
+            REQUIRE_NOTHROW(pos = generator.generate());
+            CHECK(pos.x <= bounds.x);
+            CHECK(pos.x >= 0.0f);
+            CHECK(pos.y <= bounds.y);
+            CHECK(pos.y >= 0.0f);
+        }
+
+        SECTION("minimum distance")
+        {
+            for (int i = 0; i < int(bounds.x); i++)
+                REQUIRE_NOTHROW(generator.generate());
+
+            for (const glm::vec2& p : generator.getPositions())
+            {
+                CAPTURE(p);
+                for (const glm::vec2& q : generator.getPositions())
+                {
+                    CAPTURE(q);
+                    if (p != q)
+                        checkCollision(p, q, bounds, footprint);
+                }
+            }
+        }
+
+        SECTION("bounds")
+        {
+            for (int i = 0; i < int(bounds.x); i++)
+            {
+                glm::vec2 position;
+                REQUIRE_NOTHROW(position = generator.generate());
+                CHECK(position.x <= bounds.x);
+                CHECK(position.x >= 0.0f);
+                CHECK(position.y <= bounds.y);
+                CHECK(position.y >= 0.0f);
+            }
         }
     }
 }

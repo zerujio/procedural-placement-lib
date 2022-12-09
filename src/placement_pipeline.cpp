@@ -163,9 +163,11 @@ glutils::Buffer::Range PlacementPipeline::m_getResultRange() const
 void PlacementPipeline::setRandomSeed(uint seed)
 {
     constexpr auto wg_size = GenerationKernel::work_group_size;
+
     // dart throwing algorithm for poisson disk distribution
-    DiskDistributionGenerator generator {1.0f, glm::vec2(wg_size) * GenerationKernel::s_work_group_scale};
+    DiskDistributionGenerator generator {1.0f, wg_size * GenerationKernel::s_spacing_factor};
     generator.setSeed(seed);
+    generator.setMaxAttempts(100);
 
     std::array<std::array<glm::vec2, wg_size.y>, wg_size.x> positions;
 
