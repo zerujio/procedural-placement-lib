@@ -17,7 +17,7 @@ target_link_libraries(example-common
 target_include_directories(example-common PUBLIC $<TARGET_PROPERTY:imgui,INTERFACE_INCLUDE_DIRECTORIES>)
 
 add_executable(01-basic-placement 01-basic-placement.cpp common/camera_controller.cpp)
-target_link_libraries(01-basic-placement example-common)
+target_link_libraries(01-basic-placement example-common stb_image)
 
 add_executable(02-basic-visualization 02-basic-visualization.cpp)
 target_link_libraries(02-basic-visualization example-common)

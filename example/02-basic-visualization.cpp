@@ -15,8 +15,8 @@
 
 int main()
 {
-    GLFWInitGuard glfw_init_guard;
-    Window window {"02 - Basic Visualization"};
+    GLFW::InitGuard glfw_init_guard;
+    GLFW::Window window {"02 - Basic Visualization"};
 
     //placement
     GLuint densitymap = loadTexture("assets/heightmap.png"); // deliberately using heightmap as densitymap
