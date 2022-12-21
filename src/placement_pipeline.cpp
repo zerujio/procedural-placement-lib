@@ -151,6 +151,7 @@ std::vector<glm::vec3> PlacementPipeline::copyResultsToCPU() const
 void PlacementPipeline::copyResultsToGPUBuffer(glutils::GLuint buffer, glutils::GLsizeiptr offset) const
 {
     const auto range = m_getResultRange();
+    gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
     gl.CopyNamedBufferSubData(m_buffer.getBuffer().getName(), buffer, range.offset, offset, range.size);
 }
 
