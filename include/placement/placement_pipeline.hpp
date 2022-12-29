@@ -76,7 +76,7 @@ namespace placement {
          * @param index the index of a texture unit such that indices in the range [index, index + required_texture_units)
          *      are all valid texture unit indices.
          */
-        void setBaseTextureUnit(glutils::GLuint index);
+        void setBaseTextureUnit(GL::GLuint index);
 
         /// The number of different shader storage buffer binding points used by the placement compute shaders.
         static constexpr auto required_shader_storage_binding_points = 3u;
@@ -86,7 +86,7 @@ namespace placement {
          * @param index An index such that elements in the range [index, index + required_shader_storage_binding_points)
          *      are valid shader storage buffer binding points.
          */
-        void setBaseShaderStorageBindingPoint(glutils::GLuint index);
+        void setBaseShaderStorageBindingPoint(GL::GLuint index);
 
         /// Copy results from GPU buffer to CPU memory
         [[nodiscard]] std::vector<glm::vec3> copyResultsToCPU() const;
@@ -100,14 +100,14 @@ namespace placement {
          * least @p offset + getResultsSize() * sizeof(vec4).
          * @param offset a byte offset into @p buffer
          */
-        void copyResultsToGPUBuffer(glutils::GLuint buffer, glutils::GLsizeiptr offset = 0u) const;
+        void copyResultsToGPUBuffer(GL::GLuint buffer, GL::GLsizeiptr offset = 0u) const;
 
     private:
 
-        void m_setCandidateBufferBindingIndex(glutils::GLuint index);
-        void m_setIndexBufferBindingIndex(glutils::GLuint index);
-        void m_setPositionBufferBindingIndex(glutils::GLuint index);
-        glutils::Buffer::Range m_getResultRange() const;
+        void m_setCandidateBufferBindingIndex(GL::GLuint index);
+        void m_setIndexBufferBindingIndex(GL::GLuint index);
+        void m_setPositionBufferBindingIndex(GL::GLuint index);
+        [[nodiscard]] GL::Buffer::Range m_getResultRange() const;
 
         struct WorldData
         {
@@ -121,33 +121,33 @@ namespace placement {
         IndexedCopyKernel m_copy_kernel;
 
         /// number of valid candidates. Total candidates are equal to m_buffer.getSize()
-        glutils::GLsizeiptr m_valid_count = 0;
+        GL::GLsizeiptr m_valid_count = 0;
 
         class Buffer
         {
         public:
-            void resize(glutils::GLsizeiptr candidate_count);
-            void reserve(glutils::GLsizeiptr candidate_count);
+            void resize(GL::GLsizeiptr candidate_count);
+            void reserve(GL::GLsizeiptr candidate_count);
 
-            [[nodiscard]] glutils::GLsizeiptr getSize() const {return m_size;}
-            [[nodiscard]] glutils::GLsizeiptr getCapacity() const {return m_capacity;}
+            [[nodiscard]] GL::GLsizeiptr getSize() const {return m_size;}
+            [[nodiscard]] GL::GLsizeiptr getCapacity() const {return m_capacity;}
 
-            [[nodiscard]] glutils::Buffer getBuffer() const;
-            [[nodiscard]] glutils::Buffer::Range getCandidateRange() const;
-            [[nodiscard]] glutils::Buffer::Range getIndexRange() const;
-            [[nodiscard]] glutils::Buffer::Range getPositionRange() const;
+            [[nodiscard]] GL::BufferHandle getBuffer() const;
+            [[nodiscard]] GL::Buffer::Range getCandidateRange() const;
+            [[nodiscard]] GL::Buffer::Range getIndexRange() const;
+            [[nodiscard]] GL::Buffer::Range getPositionRange() const;
 
         private:
-            glutils::Guard<glutils::Buffer> m_buffer {};
-            glutils::GLsizeiptr m_capacity {0};
-            glutils::GLsizeiptr m_size {0};
+            GL::Buffer m_buffer {};
+            GL::GLsizeiptr m_capacity {0};
+            GL::GLsizeiptr m_size {0};
 
-            glutils::Buffer::Range m_candidate_range;
-            glutils::Buffer::Range m_index_range;
-            glutils::Buffer::Range m_position_range;
+            GL::Buffer::Range m_candidate_range;
+            GL::Buffer::Range m_index_range;
+            GL::Buffer::Range m_position_range;
 
-            static constexpr glutils::GLsizeiptr s_min_capacity = 64;
-            static glutils::GLsizeiptr s_calculateSize(glutils::GLsizeiptr capacity);
+            static constexpr GL::GLsizeiptr s_min_capacity = 64;
+            static GL::GLsizeiptr s_calculateSize(GL::GLsizeiptr capacity);
 
             class Allocator;
         } m_buffer;

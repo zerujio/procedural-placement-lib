@@ -5,7 +5,7 @@ namespace GLFW
 
 static void onWindowResize(GLFWwindow*, int width, int height)
 {
-    glutils::gl.Viewport(0, 0, width, height);
+    GL::gl.Viewport(0, 0, width, height);
 }
 
 Window::Window(const char *title, glm::uvec2 initial_size) :
@@ -16,7 +16,7 @@ Window::Window(const char *title, glm::uvec2 initial_size) :
 
     glfwMakeContextCurrent(m_window.get());
 
-    if (!glutils::loadGLContext(glfwGetProcAddress))
+    if (!GL::loadGLContext(glfwGetProcAddress))
         throw std::runtime_error("Failed to load OpenGL context");
 
     glfwSetWindowSizeCallback(m_window.get(), onWindowResize);

@@ -21,13 +21,13 @@ namespace placement {
         using ComputeKernel::ComputeKernel;
 
         [[nodiscard]]
-        glutils::GLuint getCandidateBufferBindingIndex() const {return m_candidate_ssb.getBindingIndex();}
+        GL::GLuint getCandidateBufferBindingIndex() const {return m_candidate_ssb.getBindingIndex();}
 
-        void setCandidateBufferBindingIndex(glutils::GLuint index) {m_candidate_ssb.setBindingIndex(*this, index);}
+        void setCandidateBufferBindingIndex(GL::GLuint index) {m_candidate_ssb.setBindingIndex(*this, index);}
 
-        static glutils::GLsizeiptr calculateCandidateBufferSize(glutils::GLsizeiptr element_count)
+        static GL::GLsizeiptr calculateCandidateBufferSize(GL::GLsizeiptr element_count)
         {
-            return element_count * static_cast<glutils::GLsizeiptr>(sizeof(glm::vec4));
+            return element_count * static_cast<GL::GLsizeiptr>(sizeof(glm::vec4));
         }
 
     protected:

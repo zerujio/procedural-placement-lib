@@ -35,7 +35,7 @@ unsigned int loadTexture(const char* filename)
 {
     ImageFile image_file {filename};
 
-    using glutils::gl;
+    using GL::gl;
 
     unsigned int texture;
     gl.GenTextures(1, &texture);

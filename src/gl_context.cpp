@@ -5,7 +5,7 @@ namespace placement {
 
     bool loadGLContext(GLloader loader) noexcept
     {
-        return glutils::loadGLContext(loader);
+        return GL::loadGLContext(loader);
     }
 
 } // placement

@@ -19,16 +19,16 @@ namespace placement {
 
         /// Get the texture unit the heightmap sampler will read from.
         [[nodiscard]]
-        auto getHeightTextureUnit() const -> glutils::GLuint {return m_heightmap.getTextureUnit();}
+        auto getHeightTextureUnit() const -> GL::GLuint {return m_heightmap.getTextureUnit();}
 
         /// Set the texture unit the heightmap will be read from.
-        void setHeightTextureUnit(glutils::GLuint new_index) {m_heightmap.setTextureUnit(*this, new_index);}
+        void setHeightTextureUnit(GL::GLuint new_index) {m_heightmap.setTextureUnit(*this, new_index);}
 
         /// Get the texture unit the densitymap will be read from.
-        [[nodiscard]] auto getDensitytextureUnit() const -> glutils::GLuint {return m_densitymap.getTextureUnit();}
+        [[nodiscard]] auto getDensitytextureUnit() const -> GL::GLuint {return m_densitymap.getTextureUnit();}
 
         /// Set the texture unit the densitymap will be read from.
-        void setDensityTextureUnit(glutils::GLuint new_index) {m_densitymap.setTextureUnit(*this, new_index);}
+        void setDensityTextureUnit(GL::GLuint new_index) {m_densitymap.setTextureUnit(*this, new_index);}
 
         /**
          * @brief Set the values for the arguments.
@@ -50,7 +50,7 @@ namespace placement {
          * argument values just set. This value should be used to calculate the size of the position and index buffers,
          * and can be queried with calculateCandidateCount().
          */
-        glutils::GLsizeiptr setArgs(const glm::vec3& world_scale, float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound);
+        GL::GLsizeiptr setArgs(const glm::vec3& world_scale, float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound);
 
 
         /// The work group size of this kernel.

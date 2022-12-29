@@ -38,9 +38,9 @@ private:
     static constexpr unsigned int s_main_buffer_binding = 0;
     static constexpr unsigned int s_instance_buffer_binding = s_main_buffer_binding + 1;
 
-    glutils::Guard<glutils::Buffer> m_main_buffer;
-    glutils::Guard<glutils::Buffer> m_instance_buffer;
-    glutils::Guard<glutils::VertexArray> m_vertex_array;
+    GL::Guard<GL::BufferHandle> m_main_buffer;
+    GL::Guard<GL::BufferHandle> m_instance_buffer;
+    GL::Guard<GL::VertexArrayHandle> m_vertex_array;
     std::uint32_t m_vertex_count;
     std::uint32_t m_index_count;
     std::uint32_t m_instance_count;
@@ -54,7 +54,7 @@ int main()
     glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
     GLFW::Window window {"03 - Interactive placement"};
 
-    glutils::enableDebugCallback();
+    GL::enableDebugCallback();
 
     const GLuint heightmap = loadTexture("assets/heightmap.png");
 
@@ -223,7 +223,7 @@ SimpleInstancedMesh::SimpleInstancedMesh(const std::vector<glm::vec3> &vertices,
         std::memcpy(init_data, vertices.data(), vertex_data_size);
         std::memcpy(init_data + vertex_data_size, indices.data(), index_data_size);
 
-        m_main_buffer->allocateImmutable(vertex_data_size + index_data_size, glutils::Buffer::StorageFlags::none,
+        m_main_buffer->allocateImmutable(vertex_data_size + index_data_size, GL::BufferHandle::StorageFlags::none,
                                          init_data);
     }
 
@@ -232,8 +232,8 @@ SimpleInstancedMesh::SimpleInstancedMesh(const std::vector<glm::vec3> &vertices,
     const auto position_location = simple::vertex_position_def.layout.location;
     m_vertex_array->bindAttribute(position_location, s_main_buffer_binding);
     m_vertex_array->setAttribFormat(position_location,
-                                    glutils::VertexArray::AttribSize::three,
-                                    glutils::VertexArray::AttribType::float_,
+                                    GL::VertexArrayHandle::AttribSize::three,
+                                    GL::VertexArrayHandle::AttribType::float_,
                                     false, 0);
     m_vertex_array->enableAttribute(position_location);
 
@@ -245,8 +245,8 @@ SimpleInstancedMesh::SimpleInstancedMesh(const std::vector<glm::vec3> &vertices,
 
     m_vertex_array->bindAttribute(instance_attr_location, s_instance_buffer_binding);
     m_vertex_array->setAttribFormat(instance_attr_location,
-                                    glutils::VertexArray::AttribSize::three,
-                                    glutils::VertexArray::AttribType::float_,
+                                    GL::VertexArrayHandle::AttribSize::three,
+                                    GL::VertexArrayHandle::AttribType::float_,
                                     false, 0);
     m_vertex_array->enableAttribute(instance_attr_location);
 }
@@ -254,7 +254,7 @@ SimpleInstancedMesh::SimpleInstancedMesh(const std::vector<glm::vec3> &vertices,
 void SimpleInstancedMesh::updateInstanceData(const placement::PlacementPipeline &placement)
 {
     m_instance_count = placement.getResultsSize();
-    m_instance_buffer->allocate(m_instance_count * sizeof(glm::vec4), glutils::Buffer::Usage::static_draw);
+    m_instance_buffer->allocate(m_instance_count * sizeof(glm::vec4), GL::BufferHandle::Usage::static_draw);
 
     placement.copyResultsToGPUBuffer(m_instance_buffer->getName());
 }

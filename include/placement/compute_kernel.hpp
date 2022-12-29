@@ -38,15 +38,15 @@ namespace placement {
             [[nodiscard]] auto get() const {return m_index;}
 
         protected:
-            ProgramResourceIndexBase(const ComputeKernel& kernel, glutils::Program::Interface program_interface,
+            ProgramResourceIndexBase(const ComputeKernel& kernel, GL::ProgramHandle::Interface program_interface,
                                      const char* resource_name);
 
         private:
-            glutils::GLuint m_index;
+            GL::GLuint m_index;
         };
 
         /// Queries and stores the index for some program resource.
-        template<glutils::Program::Interface Interface>
+        template<GL::ProgramHandle::Interface Interface>
         class ProgramResourceIndex : public ProgramResourceIndexBase
         {
         public:
@@ -64,10 +64,10 @@ namespace placement {
              * @return the current binding index.
              */
             [[nodiscard]]
-            auto getBindingIndex() const -> glutils::GLuint { return m_binding_index; }
+            auto getBindingIndex() const -> GL::GLuint { return m_binding_index; }
 
         protected:
-            using Type = glutils::Program::Interface;
+            using Type = GL::ProgramHandle::Interface;
 
             explicit InterfaceBlockBase(const ComputeKernel& kernel, ProgramResourceIndexBase resource_index, Type type)
             : m_resource_index(resource_index)
@@ -75,14 +75,14 @@ namespace placement {
                 m_queryBindingIndex(kernel, type);
             }
 
-            auto m_queryBindingIndex(const ComputeKernel& kernel, Type type) -> glutils::GLuint;
+            auto m_queryBindingIndex(const ComputeKernel& kernel, Type type) -> GL::GLuint;
 
             ProgramResourceIndexBase m_resource_index;
-            glutils::GLuint m_binding_index {0};
+            GL::GLuint m_binding_index {0};
         };
 
         /// Lightweight object for manipulating uniform and shader storage interface block binding points.
-        template<glutils::Program::Interface InterfaceType>
+        template<GL::ProgramHandle::Interface InterfaceType>
         class InterfaceBlock : public InterfaceBlockBase
         {
             static_assert(InterfaceType == Type::uniform_block || InterfaceType == Type::shader_storage_block,
@@ -96,19 +96,19 @@ namespace placement {
             InterfaceBlock(const ComputeKernel& kernel, const char* name) : InterfaceBlock(kernel, {kernel, name}) {}
 
             /// Change the binding point.
-            void setBindingIndex(const ComputeKernel& kernel, glutils::GLuint index)
+            void setBindingIndex(const ComputeKernel& kernel, GL::GLuint index)
             {
                 if constexpr (InterfaceType == Type::uniform_block)
-                    kernel.m_program->setUniformBlockBinding(m_resource_index.get(), index);
+                    kernel.m_program.setUniformBlockBinding(m_resource_index.get(), index);
                 else if constexpr (InterfaceType == Type::shader_storage_block)
-                    kernel.m_program->setShaderStorageBlockBinding(m_resource_index.get(), index);
+                    kernel.m_program.setShaderStorageBlockBinding(m_resource_index.get(), index);
 
                 m_binding_index = index;
             }
         };
 
-        using UniformBlock = InterfaceBlock<glutils::Program::Interface::uniform_block>;
-        using ShaderStorageBlock = InterfaceBlock<glutils::Program::Interface::shader_storage_block>;
+        using UniformBlock = InterfaceBlock<GL::ProgramHandle::Interface::uniform_block>;
+        using ShaderStorageBlock = InterfaceBlock<GL::ProgramHandle::Interface::shader_storage_block>;
 
         /// Queries and stores the location of a uniform.
         struct UniformLocation
@@ -116,14 +116,14 @@ namespace placement {
         public:
             UniformLocation(const ComputeKernel& kernel, const char* uniform_name);
 
-            [[nodiscard]] auto get() const -> glutils::GLint {return m_location;}
+            [[nodiscard]] auto get() const -> GL::GLint {return m_location;}
 
             [[nodiscard]] auto isValid() const -> bool {return m_location >= 0;}
 
             explicit operator bool() const {return isValid();}
 
         private:
-            glutils::GLint m_location {-1};
+            GL::GLint m_location {-1};
         };
 
 
@@ -140,7 +140,7 @@ namespace placement {
             : TextureSampler(kernel, UniformLocation(kernel, name)) {}
 
             /// Set the texture unit for this sampler
-            void setTextureUnit(const ComputeKernel& kernel, glutils::GLuint index);
+            void setTextureUnit(const ComputeKernel& kernel, GL::GLuint index);
 
             /**
              * @brief Get the cached texture unit index.
@@ -149,19 +149,19 @@ namespace placement {
              * @return the current texture unit
              */
             [[nodiscard]]
-            auto getTextureUnit() const -> glutils::GLuint { return m_tex_unit; }
+            auto getTextureUnit() const -> GL::GLuint { return m_tex_unit; }
 
             /// Query the GL for the current texture unit index (and update the cached value).
-            auto queryTextureUnit(const ComputeKernel& kernel) -> glutils::GLuint;
+            auto queryTextureUnit(const ComputeKernel& kernel) -> GL::GLuint;
         private:
             UniformLocation m_location;
-            glutils::GLuint m_tex_unit {0};
+            GL::GLuint m_tex_unit {0};
         };
 
         template<typename T>
-        void setUniform(glutils::GLint location, T value) const
+        void setUniform(GL::GLint location, T value) const
         {
-            m_program->setUniform(location, value);
+            m_program.setUniform(location, value);
         }
 
         template<typename T>
@@ -171,33 +171,33 @@ namespace placement {
         }
 
         template<typename T>
-        void setUniform(glutils::GLint location, glutils::GLsizei count, const T* values) const
+        void setUniform(GL::GLint location, GL::GLsizei count, const T* values) const
         {
-            m_program->setUniform(location, count, values);
+            m_program.setUniform(location, count, values);
         }
 
         template<typename T>
-        void setUniform(UniformLocation location, glutils::GLsizei count, const T* values) const
+        void setUniform(UniformLocation location, GL::GLsizei count, const T* values) const
         {
             setUniform(location.get(), count, values);
         }
 
         template<typename T>
-        void setUniformMatrix(glutils::GLint location, glutils::GLsizei count, glutils::GLboolean transpose,
+        void setUniformMatrix(GL::GLint location, GL::GLsizei count, GL::GLboolean transpose,
                               const T* values) const
         {
-            m_program->setUniformMatrix(location, count, transpose, values);
+            m_program.setUniformMatrix(location, count, transpose, values);
         }
 
         template<typename T>
-        void setUniformMatrix(UniformLocation location, glutils::GLsizei count, glutils::GLboolean transpose,
+        void setUniformMatrix(UniformLocation location, GL::GLsizei count, GL::GLboolean transpose,
                               const T* values) const
         {
             setUniformMatrix(location.get(), count, transpose, values);
         }
 
     private:
-        glutils::Guard<glutils::Program> m_program;
+        GL::Program m_program;
     };
 
 } // placement

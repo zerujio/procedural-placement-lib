@@ -5,7 +5,7 @@
 
 namespace placement
 {
-    using glutils::gl;
+    using GL::gl;
 }
 
 #endif //PROCEDURALPLACEMENTLIB_GL_CONTEXT_HPP

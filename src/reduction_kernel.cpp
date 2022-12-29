@@ -89,7 +89,7 @@ void main()
 }
 )glsl").str();
 
-    using namespace glutils;
+    using namespace GL;
 
     IndexAssignmentKernel::IndexAssignmentKernel() : ReductionKernel(s_source_string) {}
 
