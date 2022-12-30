@@ -11,17 +11,17 @@ namespace placement {
     {
         using namespace GL;
 
-        Guard<ShaderHandle> shader {ShaderHandle::Type::compute};
-        shader->setSource(static_cast<GLsizei>(count), source_strings);
-        shader->compile();
-        if (!shader->getParameter(ShaderHandle::Parameter::compile_status))
-            throw GLError(shader->getInfoLog());
+        Shader shader {ShaderHandle::Type::compute};
+        shader.setSource(static_cast<GLsizei>(count), source_strings);
+        shader.compile();
+        if (!shader.getParameter(ShaderHandle::Parameter::compile_status))
+            throw GLError(shader.getInfoLog());
 
-        m_program.attachShader(*shader);
+        m_program.attachShader(shader);
         m_program.link();
         if (!m_program.getParameter(ProgramHandle::Parameter::link_status))
             throw GLError(m_program.getInfoLog());
-        m_program.detachShader(*shader);
+        m_program.detachShader(shader);
     }
 
     void ComputeKernel::m_useProgram() const
