@@ -12,10 +12,87 @@
 
 namespace placement {
 
-    class PlacementPipeline
-    {
-    public:
-        PlacementPipeline();
+/// World data contains information about the landscape objects are placed on.
+struct WorldData
+{
+    /// Dimensions of the world
+    glm::vec3 scale;
+
+    /// Name of an OpenGL texture object to be used as the heightmap of the terrain.
+    GL::GLuint heightmap;
+};
+
+/// Layer data holds information for multiple object types with the same footprint.
+struct LayerData
+{
+    /// Minimum separation between any two placed object, i.e. a collision diameter.
+    float footprint;
+
+    /// An array of density maps, each one representing a different "object class".
+    std::vector<GL::GLuint> densitymaps;
+};
+
+// TODO: implement this, in a separate file.
+class PlacementResult
+{
+public:
+    /// Suspend execution until results are available.
+    void wait() const;
+
+    /// Check if results are available.
+    bool ready() const;
+
+    /// Get the total number of elements generated.
+    [[nodiscard]] std::size_t getSize() const;
+
+    /// Get the number of elements generated for a specific class.
+    [[nodiscard]] std::size_t getClassSize() const;
+
+    /// Copy all elements from a specific class to host (CPU) memory.
+    [[nodiscard]] std::vector<glm::vec3> copyClassToHost(unsigned int class_index) const;
+
+    /// Copy results to host (CPU) memory.
+    [[nodiscard]] std::vector<std::vector<glm::vec3>> copyToHost() const;
+
+    /**
+     * @brief Copy ALL data to another buffer.
+     * @param buffer_name a GL buffer into which the results will be copied.
+     *
+     * The data within the buffer is formatted as
+     *
+     *  struct Results
+     *  {
+     *      uint count;
+     *      uint class_count[N];
+     *      vec4 elements[count];
+     *  };
+     *
+     *  where
+     *
+     *  - `N` is the number of object classes.
+     *  - `count` is the total element count across all classes.
+     *  - `class_count` is an array containing the element count for each class; i.e. `class_count[i]` is the number
+     *  of elements of class `i`.
+     *  - `elements` contains all generated elements. Element data is laid out contiguously in the array and ordered
+     *  by class. This means that elements from class 0 are in the index range [0, class_count[0]) of the array,
+     *  those from class 1 lay in the range [class_count[0], class_count[0] + class_count[1]), etc.
+     */
+    void copyData(GL::GLuint buffer_name) const;
+
+    /// Copy the element count struct to another buffer.
+    void copyCounts(GL::GLuint buffer_name) const;
+
+    /// Copy all elements ot another buffer.
+    void copyElements(GL::GLuint buffer_name, GL::GLsizeiptr offset = 0u) const;
+
+    /// Copy all elements from a specific class to another buffer.
+    void copyClassElements(unsigned int class_index, GL::GLuint buffer_name, GL::GLsizeiptr offset = 0u) const;
+};
+
+class PlacementPipeline
+{
+public:
+    PlacementPipeline();
 
     /**
      * @brief Compute placement for the specified area.
@@ -33,14 +110,22 @@ namespace placement {
      * @param lower_bound minimum x and y coordinates of the placement area
      * @param upper_bound maximum x and y coordinates of the placement area
      */
+     [[deprecated("replaced by overload with explicit WorldData and LayerData arguments")]]
     void computePlacement(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound);
+
+    /// Multiclass placement.
+    [[nodiscard]]
+    PlacementResult computePlacement(const WorldData& world_data, const LayerData& layer_data,
+                                     glm::vec2 lower_bound, glm::vec2 upper_bound);
 
     /**
      * @brief The heightmap texture.
      * @param tex integer name for a 2D OpenGL texture object.
      */
+    [[deprecated("heightmap should be passed through WorldData")]]
     void setHeightTexture(unsigned int tex);
 
+    [[deprecated("heightmap is now part of WorldData")]]
     [[nodiscard]]
     auto getHeightTexture() const -> unsigned int;
 
@@ -48,8 +133,10 @@ namespace placement {
      * @brief The density map texture.
      * @param tex integer name for a 2D OpenGL texture object.
      */
+    [[deprecated("density maps are now part of LayerData")]]
     void setDensityTexture(unsigned int tex);
 
+    [[deprecated("density maps are now part of LayerData")]]
     [[nodiscard]]
     auto getDensityTexture() const -> unsigned int;
 
@@ -57,8 +144,10 @@ namespace placement {
      * @brief The scale of the world.
      * @param scale
      */
+    [[deprecated("world scale is now part of WorldData")]]
     void setWorldScale(const glm::vec3 &scale);
 
+    [[deprecated("world scale is now part of WorldData")]]
     [[nodiscard]]
     auto getWorldScale() const -> const glm::vec3 &;
 
@@ -89,9 +178,12 @@ namespace placement {
     void setBaseShaderStorageBindingPoint(GL::GLuint index);
 
     /// Copy results from GPU buffer to CPU memory
-    [[nodiscard]] std::vector<glm::vec3> copyResultsToCPU() const;
+    [[deprecated("replaced by PlacementResults::copyToHost()")]]
+    [[nodiscard]]
+    std::vector<glm::vec3> copyResultsToCPU() const;
 
     /// Return the number of valid positions generated by the last placement operation.
+    [[deprecated("replaced by PlacementResults::getSize()")]]
     [[nodiscard]] std::size_t getResultsSize() const
     { return m_valid_count; }
 
@@ -101,6 +193,7 @@ namespace placement {
      * least @p offset + getResultsSize() * sizeof(vec4).
      * @param offset a byte offset into @p buffer
      */
+    [[deprecated("replaced by PlacementResults::copyData")]]
     void copyResultsToGPUBuffer(GL::GLuint buffer, GL::GLsizeiptr offset = 0u) const;
 
 private:

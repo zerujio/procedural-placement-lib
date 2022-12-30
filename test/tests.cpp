@@ -218,36 +218,33 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
 {
     placement::PlacementPipeline pipeline;
 
-    const glm::vec3 world_scale = {10.0f, 1.0f, 10.0f};
-    pipeline.setWorldScale(world_scale);
-
-    const auto black_texture = s_texture_loader["assets/black.png"];
-    pipeline.setHeightTexture(black_texture);
-
-    const auto white_texture = s_texture_loader["assets/white.png"];
-    pipeline.setDensityTexture(white_texture);
+    placement::WorldData world_data {{10.0f, 1.0f, 10.0f}, s_texture_loader["assets/black.png"]};
+    placement::LayerData layer_data {1.0f, {s_texture_loader["assets/white.png"]}};
 
     SECTION("Placement with < 0 area should return an empty vector")
     {
-        pipeline.computePlacement(1.0f, {0.0f, 0.0f}, {-1.0f, -1.0f});
-        auto points = pipeline.copyResultsToCPU();
-        CHECK(points.empty());
+        auto results = pipeline.computePlacement(world_data, layer_data, {0.0f, 0.0f}, {-1.0f, -1.0f});
+        auto points = results.copyToHost();
+        REQUIRE(!points.empty());
+        CHECK(points[0].empty());
 
-        pipeline.computePlacement(1.0f, {0.0f, 0.0f}, {10.0f, -1.0f});
-        points = pipeline.copyResultsToCPU();
-        CHECK(points.empty());
+        results = pipeline.computePlacement(world_data, layer_data, {0.0f, 0.0f}, {10.0f, -1.0f});
+        points = results.copyToHost();
+        REQUIRE(!points.empty());
+        CHECK(points[0].empty());
 
-        pipeline.computePlacement(1.0f, {0.0f, 0.0f}, {-1.0f, 10.0f});
-        points = pipeline.copyResultsToCPU();
-        CHECK(points.empty());
+        results = pipeline.computePlacement(world_data, layer_data, {0.0f, 0.0f}, {-1.0f, 10.0f});
+        points = results.copyToHost();
+        REQUIRE(!points.empty());
+        CHECK(points[0].empty());
     }
 
     SECTION("Placement with one work group")
     {
         const glm::vec2 scale = GenerationKernel::s_work_group_scale * glm::vec2(GenerationKernel::work_group_size);
-        pipeline.setWorldScale({scale.x, 1.0f, scale.y});
-        pipeline.computePlacement(1.0f, {0.0f, 0.0f}, scale);
-        const auto points = pipeline.copyResultsToCPU();
+        world_data.scale = {scale.x, world_data.scale.y, scale.y};
+        const auto results = pipeline.computePlacement(world_data, layer_data, {0.0f, 0.0f}, scale);
+        const auto points = results.copyToHost();
 
         CAPTURE(scale);
         CHECK(points.size() == GenerationKernel::work_group_size.x * GenerationKernel::work_group_size.y);
@@ -255,30 +252,27 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
 
     SECTION("Determinism (simple)")
     {
-        pipeline.setWorldScale({1.0f, 1.0f, 1.0f});
+        world_data.scale = {1.0f, 1.0f, 1.0f};
 
-        pipeline.computePlacement(0.01f, glm::vec2(0.f), glm::vec2(1.f));
-        auto positions0 = pipeline.copyResultsToCPU();
+        auto positions_0 = pipeline.computePlacement(world_data, layer_data, glm::vec2(0.f), glm::vec2(1.f)).copyToHost()[0];
+        auto positions_1 = pipeline.computePlacement(world_data, layer_data, glm::vec2(0.f), glm::vec2(1.f)).copyToHost()[0];
 
-        pipeline.computePlacement(0.01f, glm::vec2(0.f), glm::vec2(1.f));
-        auto positions1 = pipeline.copyResultsToCPU();
-
-        CHECK(!positions0.empty());
-        CHECK(!positions1.empty());
+        CHECK(!positions_0.empty());
+        CHECK(!positions_1.empty());
 
         {
-            CAPTURE(positions0, positions1);
-            REQUIRE(positions0.size() == positions1.size());
+            CAPTURE(positions_0, positions_1);
+            REQUIRE(positions_0.size() == positions_1.size());
         }
 
-        std::sort(positions0.begin(), positions0.end(), vecOrder<glm::vec3>);
-        std::sort(positions1.begin(), positions1.end(), vecOrder<glm::vec3>);
+        std::sort(positions_0.begin(), positions_0.end(), vecOrder<glm::vec3>);
+        std::sort(positions_1.begin(), positions_1.end(), vecOrder<glm::vec3>);
 
         std::vector<glm::vec3> diff;
-        diff.resize(positions0.size());
+        diff.resize(positions_0.size());
 
-        const auto diff_end = std::set_symmetric_difference(positions0.begin(), positions0.end(),
-                                                            positions1.begin(), positions1.end(),
+        const auto diff_end = std::set_symmetric_difference(positions_0.begin(), positions_0.end(),
+                                                            positions_1.begin(), positions_1.end(),
                                                             diff.begin(), vecOrder<glm::vec3>);
         diff.erase(diff_end, diff.end());
         CAPTURE(diff);
@@ -287,6 +281,8 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
 
     const float footprint = GENERATE(take(3, random(0.01f, 0.1f)));
     INFO("footprint = " << footprint);
+
+    layer_data.footprint = footprint;
 
     const float boundary_offset_x = GENERATE(take(3, random(0.f, 0.4f)));
     const float boundary_offset_y = GENERATE(take(3, random(0.f, 0.4f)));
@@ -302,23 +298,23 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
 
     SECTION("Determinism")
     {
-        auto computePlacement = [&]()
+        auto compute_placement = [&]()
         {
-            pipeline.computePlacement(footprint, lower_bound, upper_bound);
-            auto results = pipeline.copyResultsToCPU();
-            std::sort(results.begin(), results.end(), vecOrder<glm::vec3>);
-            return results;
+            auto results = pipeline.computePlacement(world_data, layer_data, lower_bound, upper_bound);
+            auto positions = results.copyToHost()[0];
+            std::sort(positions.begin(), positions.end(), vecOrder<glm::vec3>);
+            return positions;
         };
 
-        const auto result0 = computePlacement();
-        CAPTURE(result0);
-        CHECK(!result0.empty());
+        const auto result_0 = compute_placement();
+        CAPTURE(result_0);
+        CHECK(!result_0.empty());
 
-        const auto result1 = computePlacement();
-        CAPTURE(result1);
-        CHECK(!result1.empty());
+        const auto result_1 = compute_placement();
+        CAPTURE(result_1);
+        CHECK(!result_1.empty());
 
-        auto computeDiff = [](const std::vector<glm::vec3>& l, const std::vector<glm::vec3>& r)
+        auto compute_diff = [](const std::vector<glm::vec3>& l, const std::vector<glm::vec3>& r)
         {
             std::vector<glm::vec3> diff;
             diff.resize(std::max(l.size(), r.size()));
@@ -328,23 +324,22 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
             return diff;
         };
 
-        const auto diff01 = computeDiff(result0, result1);
-        CAPTURE(diff01);
-        CHECK(diff01.empty());
+        const auto diff_01 = compute_diff(result_0, result_1);
+        CAPTURE(diff_01);
+        CHECK(diff_01.empty());
 
-        const auto result2 = computePlacement();
-        CAPTURE(result2);
-        CHECK(!result2.empty());
+        const auto result_2 = compute_placement();
+        CAPTURE(result_2);
+        CHECK(!result_2.empty());
 
-        const auto diff02 = computeDiff(result0, result2);
-        CAPTURE(diff02);
-        CHECK(diff02.empty());
+        const auto diff_02 = compute_diff(result_0, result_2);
+        CAPTURE(diff_02);
+        CHECK(diff_02.empty());
     }
 
     SECTION("Boundary and separation")
     {
-        pipeline.computePlacement(footprint, lower_bound, upper_bound);
-        const auto points = pipeline.copyResultsToCPU();
+        const auto points = pipeline.computePlacement(world_data, layer_data, lower_bound, upper_bound).copyToHost().front();
 
         REQUIRE(!points.empty());
 
@@ -352,44 +347,44 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
         {
             INFO("i = " << i);
             INFO("points[i] = {" << points[i].x << ", " << points[i].y << ", " << points[i].z << "}");
-            const glm::vec2 point2d{points[i].x, points[i].z};
-            CHECK(glm::all(glm::greaterThanEqual(point2d, lower_bound) && glm::lessThan(point2d, upper_bound)));
+            const glm::vec2 point {points[i].x, points[i].z};
+            CHECK(glm::all(glm::greaterThanEqual(point, lower_bound) && glm::lessThan(point, upper_bound)));
 
             for (int j = 0; j < i; j++)
             {
                 INFO("j = " << j);
                 INFO("points[j] = {" << points[j].x << ", " << points[j].y << ", " << points[j].z << "}");
-                CHECK(glm::length(point2d - glm::vec2(points[j].x, points[j].z)) >= Approx(2.0f * footprint));
+                CHECK(glm::length(point - glm::vec2(points[j].x, points[j].z)) >= Approx(2.0f * footprint));
             }
         }
     }
 
     SECTION("CPU/GPU read")
     {
-        pipeline.computePlacement(footprint, lower_bound, upper_bound);
+        const auto results = pipeline.computePlacement(world_data, layer_data, lower_bound, upper_bound);
 
-        REQUIRE(pipeline.getResultsSize());
+        REQUIRE(results.getSize());
 
         std::vector<glm::vec3> gpu_results;
-        gpu_results.reserve(pipeline.getResultsSize());
+        gpu_results.reserve(results.getSize());
 
         using namespace GL;
         Buffer buffer;
-        const auto buffer_size = static_cast<GLsizeiptr>(pipeline.getResultsSize() * sizeof(glm::vec4));
+        const auto buffer_size = static_cast<GLsizeiptr>(results.getSize() * sizeof(glm::vec4));
         buffer.allocateImmutable(buffer_size, BufferHandle::StorageFlags::map_read);
 
-        pipeline.copyResultsToGPUBuffer(buffer.getName(), 0);
+        results.copyElements(buffer.getName());
 
         {
             auto mapped_ptr = static_cast<const glm::vec4*>(buffer.map(BufferHandle::AccessMode::read_only));
             REQUIRE(mapped_ptr);
-            for (auto ptr = mapped_ptr; ptr - mapped_ptr < pipeline.getResultsSize(); ptr++)
+            for (auto ptr = mapped_ptr; ptr - mapped_ptr < results.getSize(); ptr++)
                 gpu_results.emplace_back(*ptr);
             buffer.unmap();
         }
 
-        const auto cpu_results = pipeline.copyResultsToCPU();
-        REQUIRE(cpu_results.size() == pipeline.getResultsSize());
+        const auto cpu_results = results.copyToHost()[0];
+        REQUIRE(cpu_results.size() == results.getSize());
 
         CHECK(gpu_results == cpu_results);
     }
