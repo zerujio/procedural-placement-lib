@@ -219,7 +219,7 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
     placement::PlacementPipeline pipeline;
 
     placement::WorldData world_data {{10.0f, 1.0f, 10.0f}, s_texture_loader["assets/black.png"]};
-    placement::LayerData layer_data {1.0f, {s_texture_loader["assets/white.png"]}};
+    placement::LayerData layer_data {1.0f, {{s_texture_loader["assets/white.png"]}}};
 
     SECTION("Placement with < 0 area should return an empty vector")
     {
@@ -354,7 +354,7 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
             {
                 INFO("j = " << j);
                 INFO("points[j] = {" << points[j].x << ", " << points[j].y << ", " << points[j].z << "}");
-                CHECK(glm::length(point - glm::vec2(points[j].x, points[j].z)) >= Approx(2.0f * footprint));
+                CHECK(glm::length(point - glm::vec2(points[j].x, points[j].z)) >= Approx(footprint));
             }
         }
     }
@@ -387,6 +387,113 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
         REQUIRE(cpu_results.size() == results.getSize());
 
         CHECK(gpu_results == cpu_results);
+    }
+}
+
+TEST_CASE("PlacementPipeline (multiclass)", "[pipeline][multiclass]")
+{
+    using namespace placement;
+
+    constexpr float footprint = 0.01f;
+
+    PlacementPipeline pipeline;
+    WorldData world_data {{1.f, 1.f, 1.f}, s_texture_loader["assets/heightmap.png"]};
+    LayerData layer_data {footprint, {{s_texture_loader["assets/densitymaps/linear_gradient.png"], .2},
+                                      {s_texture_loader["assets/densitymaps/bilinear_gradient.png"], .2},
+                                      {s_texture_loader["assets/densitymaps/radial_gradient.png"], .2},
+                                      {s_texture_loader["assets/densitymaps/square_gradient.png"], .2},
+                                      {s_texture_loader["assets/densitymaps/cone_gradient.png"], .2}}};
+
+    constexpr std::size_t num_classes = 5;
+    REQUIRE(layer_data.densitymaps.size() == num_classes);
+
+    const glm::vec2 lower_bound {0};
+    const glm::vec2 upper_bound {1};
+
+    auto results = pipeline.computePlacement(world_data, layer_data, lower_bound, upper_bound);
+
+    SECTION("Accessors")
+    {
+        SECTION("Host")
+        {
+            const auto all_results = results.copyToHost();
+            REQUIRE(all_results.size() == num_classes);
+            CHECK(results.getSize() == all_results.size());
+
+            for (std::size_t i = 0; i < num_classes; i++)
+            {
+                const auto class_results = results.copyClassToHost(i);
+                REQUIRE(class_results == all_results[i]);
+                CHECK(results.getClassSize(i) == class_results.size());
+            }
+        }
+
+        SECTION("Device")
+        {
+            std::vector<std::vector<glm::vec3>> all_positions;
+
+            GL::Buffer buffer;
+            buffer.allocateImmutable(results.getSize() * sizeof(glm::vec4) + (num_classes + 1) * sizeof(uint),
+                                     GL::Buffer::StorageFlags::map_read);
+
+            results.copyData(buffer.getName());
+            const void* buffer_data = buffer.map(GL::Buffer::AccessMode::read_only);
+
+            struct Count
+            {
+                uint total;
+                uint by_class[num_classes];
+            };
+
+            auto count = static_cast<const Count*>(buffer_data);
+
+            {
+                uint sum = 0;
+                for (uint class_count : count->by_class)
+                    sum += class_count;
+                REQUIRE(sum == count->total);
+            }
+
+            auto positions = reinterpret_cast<const glm::vec4*>(static_cast<const std::byte*>(buffer_data) + sizeof(count));
+
+            const auto expected = results.copyToHost();
+
+            std::size_t global_index = 0;
+            for (std::size_t class_index = 0; class_index < num_classes; class_index++)
+            {
+                CAPTURE(class_index);
+                for (auto& p : expected[class_index])
+                    CHECK(glm::vec3(positions[global_index++]) == p);
+            }
+        }
+    }
+
+    SECTION("Boundaries and separation")
+    {
+        const auto positions = results.copyToHost();
+        std::vector<glm::vec3> parsed;
+        parsed.reserve(results.getSize());
+
+        for (auto& class_positions : positions)
+            for (auto& position : class_positions)
+            {
+                for (const auto& other_position : parsed)
+                    REQUIRE(glm::distance(position, other_position) >= Approx(footprint));
+                parsed.emplace_back(position);
+            }
+    }
+
+    SECTION("Determinism")
+    {
+        auto results_1 = pipeline.computePlacement(world_data, layer_data, lower_bound, upper_bound);
+        auto results_2 = pipeline.computePlacement(world_data, layer_data, lower_bound, upper_bound);
+
+        const auto positions_0 = results.copyToHost();
+        const auto positions_1 = results_1.copyToHost();
+        const auto positions_2 = results_2.copyToHost();
+
+        CHECK(positions_0 == positions_1);
+        CHECK(positions_0 == positions_2);
     }
 }
 
@@ -760,7 +867,7 @@ TEST_CASE("DiskDistributionGenerator")
                 const glm::ivec2 tile_offset {dx, dy};
                 const glm::vec2 offset = glm::vec2(tile_offset) * bounds;
 
-                CHECK(glm::distance(p, q + offset) >= Approx(2.0f * footprint));
+                CHECK(glm::distance(p, q + offset) >= Approx(footprint));
             }
     };
 
@@ -809,7 +916,7 @@ TEST_CASE("DiskDistributionGenerator")
 
         const float footprint = GENERATE(take(3, random(0.001f, 1.0f)));
 
-        const glm::vec2 bounds = glm::vec2(x_cell_count, y_cell_count) * 2.0f * footprint / std::sqrt(2.0f);
+        const glm::vec2 bounds = glm::vec2(x_cell_count, y_cell_count) * footprint / std::sqrt(2.0f);
 
         CAPTURE(grid_size, bounds);
 
@@ -861,5 +968,94 @@ TEST_CASE("DiskDistributionGenerator")
                 CHECK(position.y >= 0.0f);
             }
         }
+    }
+}
+
+TEST_CASE("SSBO alignment")
+{
+    GL::Buffer buffer;
+
+    auto compile_compute_shader = [](const char* source_code)
+    {
+        GL::Program program;
+        GL::Shader shader{GL::Shader::Type::compute};
+        shader.setSource(source_code);
+        shader.compile();
+
+        if (shader.getParameter(GL::Shader::Parameter::compile_status) != GL_TRUE)
+            throw std::runtime_error(shader.getInfoLog());
+
+        program.attachShader(shader);
+        program.link();
+
+        if (program.getParameter(GL::Program::Parameter::link_status) != GL_TRUE)
+            throw std::runtime_error(program.getInfoLog());
+
+        program.detachShader(shader);
+
+        return program;
+    };
+
+    SECTION("struct {vec3; uint;}")
+    {
+        struct Candidate
+        {
+            glm::vec3 position;
+            uint index;
+        };
+
+        buffer.allocateImmutable(16 * sizeof(Candidate), GL::Buffer::StorageFlags::none);
+        buffer.bindBase(GL::Buffer::IndexedTarget::shader_storage, 0);
+
+        GL::Program program = compile_compute_shader(
+                "#version 450 core\n"
+                "layout(local_size_x = 16) in;"
+                "struct Candidate { vec3 position; uint index; };\n"
+                "layout(std430, binding=0) buffer Buffer { Candidate[] candidates; };\n"
+                "void main() "
+                "{"
+                "   candidates[gl_GlobalInvocationID.x] = Candidate(vec3(gl_GlobalInvocationID.x),"
+                "                                                   gl_GlobalInvocationID.x);"
+                "}\n");
+
+        std::vector<Candidate> candidates;
+        candidates.resize(16);
+
+        program.use();
+        gl.DispatchCompute(1, 1, 1);
+        gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+
+        buffer.read(0, candidates.size() * sizeof(Candidate), candidates.data());
+
+        for (uint i = 0; i < candidates.size(); i++)
+        {
+            CAPTURE(i);
+            CHECK(candidates[i].position == glm::vec3(i));
+            CHECK(candidates[i].index == i);
+        }
+    }
+
+    SECTION("vec3")
+    {
+        constexpr std::size_t num_elements = 16;
+        glm::vec4 results[num_elements];
+
+        GL::Program program = compile_compute_shader(
+                "#version 450 core\n"
+                "layout(local_size_x=16) in;\n"
+                "layout(std430, binding=0) buffer Buffer { vec3 positions[]; };\n"
+                "void main() { positions[gl_GlobalInvocationID.x] = vec3(gl_GlobalInvocationID.x); }");
+
+        buffer.allocateImmutable(sizeof(results), GL::Buffer::StorageFlags::none);
+        buffer.bindBase(GL::Buffer::IndexedTarget::shader_storage, 0);
+
+        program.use();
+        gl.DispatchCompute(1, 1, 1);
+        gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+
+        buffer.read(0, sizeof(results), results);
+
+        for (int i = 0; i < num_elements; i++)
+            CHECK(glm::vec3(results[i]) == glm::vec3(i));
     }
 }

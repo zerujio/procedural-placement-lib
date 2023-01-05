@@ -12,14 +12,21 @@
 
 namespace placement {
 
-/// World data contains information about the landscape objects are placed on.
-struct WorldData
+/// A density map specifies the probability distribution of a single class of object over the landscape.
+struct DensityMap
 {
-    /// Dimensions of the world
-    glm::vec3 scale;
+    /// name of an OpenGL texture object.
+    GL::GLuint texture {0};
 
-    /// Name of an OpenGL texture object to be used as the heightmap of the terrain.
-    GL::GLuint heightmap;
+    /// Values in texture will be multiplied by this factor.
+    float scale {1};
+
+    /// Values in texture will be offset by this amount, after scaling.
+    float offset {0};
+
+    /// Values in texture will be clamped to the range [min_value, max_value], after scaling and offset.
+    float min_value {0};
+    float max_value {1};
 };
 
 /// Layer data holds information for multiple object types with the same footprint.
@@ -29,7 +36,17 @@ struct LayerData
     float footprint;
 
     /// An array of density maps, each one representing a different "object class".
-    std::vector<GL::GLuint> densitymaps;
+    std::vector<DensityMap> densitymaps;
+};
+
+/// World data contains information about the landscape objects are placed on.
+struct WorldData
+{
+    /// Dimensions of the world
+    glm::vec3 scale;
+
+    /// Name of an OpenGL texture object to be used as the heightmap of the terrain.
+    GL::GLuint heightmap;
 };
 
 // TODO: implement this, in a separate file.
@@ -43,16 +60,28 @@ public:
     bool ready() const;
 
     /// Get the total number of elements generated.
-    [[nodiscard]] std::size_t getSize() const;
+    [[nodiscard]] std::size_t getSize() const
+    {
+        return 0;
+    }
 
     /// Get the number of elements generated for a specific class.
-    [[nodiscard]] std::size_t getClassSize() const;
+    [[nodiscard]] std::size_t getClassSize(std::size_t) const
+    {
+        return 0;
+    }
 
     /// Copy all elements from a specific class to host (CPU) memory.
-    [[nodiscard]] std::vector<glm::vec3> copyClassToHost(unsigned int class_index) const;
+    [[nodiscard]] std::vector<glm::vec3> copyClassToHost(unsigned int class_index) const
+    {
+        return std::vector<glm::vec3>();
+    }
 
     /// Copy results to host (CPU) memory.
-    [[nodiscard]] std::vector<std::vector<glm::vec3>> copyToHost() const;
+    [[nodiscard]] std::vector<std::vector<glm::vec3>> copyToHost() const
+    {
+        return std::vector<std::vector<glm::vec3>>();
+    }
 
     /**
      * @brief Copy ALL data to another buffer.
@@ -77,16 +106,28 @@ public:
      *  by class. This means that elements from class 0 are in the index range [0, class_count[0]) of the array,
      *  those from class 1 lay in the range [class_count[0], class_count[0] + class_count[1]), etc.
      */
-    void copyData(GL::GLuint buffer_name) const;
+    void copyData(GL::GLuint buffer_name) const
+    {
+
+    }
 
     /// Copy the element count struct to another buffer.
-    void copyCounts(GL::GLuint buffer_name) const;
+    void copyCounts(GL::GLuint buffer_name) const
+    {
 
-    /// Copy all elements ot another buffer.
-    void copyElements(GL::GLuint buffer_name, GL::GLsizeiptr offset = 0u) const;
+    }
+
+    /// Copy all elements to another buffer.
+    void copyElements(GL::GLuint buffer_name, GL::GLsizeiptr offset = 0u) const
+    {
+
+    }
 
     /// Copy all elements from a specific class to another buffer.
-    void copyClassElements(unsigned int class_index, GL::GLuint buffer_name, GL::GLsizeiptr offset = 0u) const;
+    void copyClassElements(unsigned int class_index, GL::GLuint buffer_name, GL::GLsizeiptr offset = 0u) const
+    {
+
+    }
 };
 
 class PlacementPipeline
@@ -116,7 +157,10 @@ public:
     /// Multiclass placement.
     [[nodiscard]]
     PlacementResult computePlacement(const WorldData& world_data, const LayerData& layer_data,
-                                     glm::vec2 lower_bound, glm::vec2 upper_bound);
+                                     glm::vec2 lower_bound, glm::vec2 upper_bound)
+    {
+        return PlacementResult();
+    }
 
     /**
      * @brief The heightmap texture.

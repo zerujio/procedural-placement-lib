@@ -50,7 +50,7 @@ namespace placement {
                                                                 -> GL::GLuint
     {
         const GLenum prop = GL_BUFFER_BINDING;
-        kernel.m_program.getResource(static_cast<GLenum>(type), m_resource_index.get(), 1, &prop, 1, nullptr,
+        kernel.m_program.getResource(type, m_resource_index.get(), 1, &prop, 1, nullptr,
                                       reinterpret_cast<GLint*>(&m_binding_index));
         return m_binding_index;
     }
