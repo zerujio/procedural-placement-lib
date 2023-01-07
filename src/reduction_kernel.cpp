@@ -95,7 +95,7 @@ void main()
 
     void IndexAssignmentKernel::dispatchCompute(std::size_t candidate_count) const
     {
-        m_useProgram();
+        useProgram();
         gl.DispatchCompute(m_calculateNumWorkGroups(candidate_count), 1, 1);
     }
 
@@ -151,7 +151,7 @@ void main()
     void IndexedCopyKernel::dispatchCompute(std::size_t candidate_count) const
     {
         const GLuint num_workgroups = candidate_count / s_workgroup_size + (candidate_count % s_workgroup_size != 0);
-        m_useProgram();
+        useProgram();
         gl.DispatchCompute(num_workgroups, 1, 1);
     }
 } // placement

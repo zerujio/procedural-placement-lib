@@ -24,7 +24,7 @@ namespace placement {
         m_program.detachShader(shader);
     }
 
-    void ComputeKernel::m_useProgram() const
+    void ComputeKernel::useProgram() const
     {
         gl.UseProgram(m_program.getName());
     }
@@ -57,7 +57,7 @@ namespace placement {
 
     void ComputeKernel::TextureSampler::setTextureUnit(const ComputeKernel& kernel, GL::GLuint texture_unit)
     {
-        kernel.setUniform(m_location, static_cast<GLint>(texture_unit));
+        kernel.m_setUniform(m_location, static_cast<GLint>(texture_unit));
         m_tex_unit = texture_unit;
     }
 

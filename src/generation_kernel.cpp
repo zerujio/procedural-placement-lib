@@ -140,23 +140,23 @@ GenerationKernel::GenerationKernel() :
         m_heightmap(*this, height_tex_def.name),
         m_densitymap(*this, density_tex_def.name)
 {
-    setUniform(position_stencil_scale_def.layout.location, s_work_group_scale);
+    m_setUniform(position_stencil_scale_def.layout.location, s_work_group_scale);
 }
 
 GL::GLsizeiptr GenerationKernel::setArgs(const glm::vec3 &world_scale, float footprint, glm::vec2 lower_bound,
                                          glm::vec2 upper_bound)
 {
     // world scale
-    setUniform(world_scale_def.layout.location, world_scale);
+    m_setUniform(world_scale_def.layout.location, world_scale);
 
     // bounds
-    setUniform(lower_bound_def.layout.location, lower_bound);
-    setUniform(upper_bound_def.layout.location, upper_bound);
+    m_setUniform(lower_bound_def.layout.location, lower_bound);
+    m_setUniform(upper_bound_def.layout.location, upper_bound);
 
     // normalization factor
     {
         const auto norm_factor = footprint / glm::vec2(world_scale.x, world_scale.z);
-        setUniform(norm_factor_def.layout.location, norm_factor);
+        m_setUniform(norm_factor_def.layout.location, norm_factor);
     }
 
     const glm::vec2 work_group_footprint = glm::vec2(work_group_size) * s_work_group_scale * footprint;
@@ -164,7 +164,7 @@ GL::GLsizeiptr GenerationKernel::setArgs(const glm::vec3 &world_scale, float foo
     // work group offset
     {
         const glm::uvec2 offset {lower_bound / work_group_footprint};
-        setUniform(work_group_offset_def.layout.location, offset);
+        m_setUniform(work_group_offset_def.layout.location, offset);
     }
 
     m_num_work_groups = glm::uvec2((upper_bound - lower_bound) / work_group_footprint) + 1u;
@@ -175,7 +175,7 @@ GL::GLsizeiptr GenerationKernel::setArgs(const glm::vec3 &world_scale, float foo
 
 void GenerationKernel::dispatchCompute() const
 {
-    m_useProgram();
+    useProgram();
     gl.DispatchCompute(m_num_work_groups.x, m_num_work_groups.y, 1);
 }
 
@@ -189,7 +189,7 @@ void GenerationKernel::setPositionStencil(
 
     for (const auto& sub_array : positions)
     {
-        setUniform(location, work_group_size.y, sub_array.data());
+        m_setUniform(location, work_group_size.y, sub_array.data());
         location += work_group_size.y;
     }
 }
