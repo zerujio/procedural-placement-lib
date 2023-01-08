@@ -38,7 +38,7 @@ layout(std430) restrict writeonly
 
 void main()
 {
-    const uint array_index = gl_WorkGroupID.x * gl_WorkGroupSize.y + gl_WorkGroupID.y;
+    const uint array_index = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
 
     const uvec2 grid_index = gl_WorkGroupID.xy + u_work_group_offset;
     const vec2 h_position = footprint * (u_work_group_pattern[gl_LocalInvocationID.x][gl_LocalInvocationID.y]
