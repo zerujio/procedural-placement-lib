@@ -56,7 +56,7 @@ void main()
 
 namespace placement {
 
-GenerationKernel::GenerationKernel() : ComputeKernel(source_string),
+NewGenerationKernel::NewGenerationKernel() : ComputeKernel(source_string),
                                        m_footprint(*this, "u_footprint"),
                                        m_world_scale(*this, "u_world_scale"),
                                        m_work_group_scale(*this, "u_work_group_scale"),
