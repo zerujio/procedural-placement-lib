@@ -4,6 +4,7 @@
 
 #include "glutils/guard.hpp"
 #include "glutils/buffer.hpp"
+#include "glutils/error.hpp"
 
 #include <stdexcept>
 
@@ -248,6 +249,27 @@ void PlacementPipeline::Buffer::reserve(GLsizeiptr candidate_count)
 GL::BufferHandle PlacementPipeline::Buffer::getBuffer() const
 {
     return m_buffer;
+}
+
+
+// PlacementResult
+
+bool PlacementResult::wait(std::chrono::nanoseconds timeout) const
+{
+    const auto status = m_sync.clientWait(false, timeout);
+
+    return status == GL::Sync::Status::already_signaled || status == GL::Sync::Status::condition_satisfied;
+}
+
+std::size_t PlacementResult::getSize() const
+{
+    return 0;
+}
+
+PlacementResult::PlacementResult(uint num_classes, GL::Buffer &&buffer, GL::Sync &&sync)
+        : m_num_classes(num_classes), m_buffer(std::move(buffer)), m_sync(std::move(sync))
+{
+
 }
 
 } // placement

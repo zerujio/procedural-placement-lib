@@ -1,4 +1,4 @@
-#include "copy_kernel.hpp"
+#include "placement/kernel/copy_kernel.hpp"
 
 static constexpr auto source_string = R"gl(
 #version 430 core
@@ -47,11 +47,5 @@ void main()
 )gl";
 
 namespace placement {
-CopyKernel::CopyKernel() : ComputeKernel(source_string),
-                           m_candidate_buffer(*this, "CandidateBuffer"),
-                           m_index_buffer(*this, "IndexBuffer"),
-                           m_output_buffer(*this, "OutputBuffer")
-{
-
-}
+CopyKernel::CopyKernel() : ComputeKernel(source_string) {}
 } // placement

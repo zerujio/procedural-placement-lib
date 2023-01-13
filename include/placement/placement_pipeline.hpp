@@ -4,11 +4,13 @@
 #include "generation_kernel.hpp"
 #include "reduction_kernel.hpp"
 
+#include "glutils/sync.hpp"
 #include "glutils/buffer.hpp"
 
 #include "glm/glm.hpp"
 
 #include <vector>
+#include <chrono>
 
 namespace placement {
 
@@ -16,17 +18,17 @@ namespace placement {
 struct DensityMap
 {
     /// name of an OpenGL texture object.
-    GL::GLuint texture {0};
+    GL::GLuint texture{0};
 
     /// Values in texture will be multiplied by this factor.
-    float scale {1};
+    float scale{1};
 
     /// Values in texture will be offset by this amount, after scaling.
-    float offset {0};
+    float offset{0};
 
     /// Values in texture will be clamped to the range [min_value, max_value], after scaling and offset.
-    float min_value {0};
-    float max_value {1};
+    float min_value{0};
+    float max_value{1};
 };
 
 /// Layer data holds information for multiple object types with the same footprint.
@@ -49,39 +51,45 @@ struct WorldData
     GL::GLuint heightmap;
 };
 
-// TODO: implement this, in a separate file.
-class PlacementResult
+/**
+ * @brief Wraps an OpenGL buffer containing the result of a placement operation.
+ * Note that the results are not necessarily available at the moment the PlacementResult object is created. If
+ * the results are not ready, most operations will cause a stall in the CPU thread in order to synchronize with the GPU.
+ * To check if the placement results are available, use isReady(). To wait until results are available, use wait().
+ */
+class PlacementResult final
 {
 public:
-    /// Suspend execution until results are available.
-    void wait() const;
+    PlacementResult(uint num_classes, GL::Buffer &&buffer, GL::Sync &&sync);
+
+    /**
+     * @brief Wait until the results are ready or the timer expires.
+     * @param timeout Maximum amount of time to wait for the results.
+     * @return true if the results became available before @p timeout nanoseconds, false otherwise.
+     */
+    [[nodiscard]] bool wait(std::chrono::nanoseconds timeout) const;
+
+    [[nodiscard]] bool wait(std::uint64_t timeout_ns) const
+    { return wait(std::chrono::nanoseconds(timeout_ns)); }
 
     /// Check if results are available.
-    bool ready() const;
+    [[nodiscard]] bool isReady() const
+    { return wait(std::chrono::nanoseconds::zero()); }
+
+    [[nodiscard]] uint getNumClasses() const
+    { return m_num_classes; }
 
     /// Get the total number of elements generated.
-    [[nodiscard]] std::size_t getSize() const
-    {
-        return 0;
-    }
+    [[nodiscard]] std::size_t getSize() const;
 
     /// Get the number of elements generated for a specific class.
-    [[nodiscard]] std::size_t getClassSize(std::size_t) const
-    {
-        return 0;
-    }
+    [[nodiscard]] std::size_t getClassSize(std::size_t) const;
 
     /// Copy all elements from a specific class to host (CPU) memory.
-    [[nodiscard]] std::vector<glm::vec3> copyClassToHost(unsigned int class_index) const
-    {
-        return std::vector<glm::vec3>();
-    }
+    [[nodiscard]] std::vector<glm::vec3> copyClassToHost(unsigned int class_index) const;
 
     /// Copy results to host (CPU) memory.
-    [[nodiscard]] std::vector<std::vector<glm::vec3>> copyToHost() const
-    {
-        return std::vector<std::vector<glm::vec3>>();
-    }
+    [[nodiscard]] std::vector<std::vector<glm::vec3>> copyToHost() const;
 
     /**
      * @brief Copy ALL data to another buffer.
@@ -106,28 +114,21 @@ public:
      *  by class. This means that elements from class 0 are in the index range [0, class_count[0]) of the array,
      *  those from class 1 lay in the range [class_count[0], class_count[0] + class_count[1]), etc.
      */
-    void copyData(GL::GLuint buffer_name) const
-    {
-
-    }
+    void copyData(GL::GLuint buffer_name) const;
 
     /// Copy the element count struct to another buffer.
-    void copyCounts(GL::GLuint buffer_name) const
-    {
-
-    }
+    void copyCounts(GL::GLuint buffer_name) const;
 
     /// Copy all elements to another buffer.
-    void copyElements(GL::GLuint buffer_name, GL::GLsizeiptr offset = 0u) const
-    {
-
-    }
+    void copyElements(GL::GLuint buffer_name, GL::GLsizeiptr offset = 0u) const;
 
     /// Copy all elements from a specific class to another buffer.
-    void copyClassElements(unsigned int class_index, GL::GLuint buffer_name, GL::GLsizeiptr offset = 0u) const
-    {
+    void copyClassElements(unsigned int class_index, GL::GLuint buffer_name, GL::GLsizeiptr offset = 0u) const;
 
-    }
+private:
+    uint m_num_classes;
+    GL::Sync m_sync;
+    GL::Buffer m_buffer;
 };
 
 class PlacementPipeline
@@ -151,12 +152,12 @@ public:
      * @param lower_bound minimum x and y coordinates of the placement area
      * @param upper_bound maximum x and y coordinates of the placement area
      */
-     [[deprecated("replaced by overload with explicit WorldData and LayerData arguments")]]
+    [[deprecated("replaced by overload with explicit WorldData and LayerData arguments")]]
     void computePlacement(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound);
 
     /// Multiclass placement.
     [[nodiscard]]
-    PlacementResult computePlacement(const WorldData& world_data, const LayerData& layer_data,
+    PlacementResult computePlacement(const WorldData &world_data, const LayerData &layer_data,
                                      glm::vec2 lower_bound, glm::vec2 upper_bound)
     {
         return PlacementResult();

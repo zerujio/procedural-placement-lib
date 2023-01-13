@@ -15,22 +15,18 @@ public:
 
     void setClassIndex(uint index) { m_setUniform(m_class_index, index); }
 
-    [[nodiscard]]
-    uint getCandidateBufferBindingIndex() const { return m_candidate_buffer.getBindingIndex(); }
-    void setCandidateBufferBindingIndex(uint index) { m_candidate_buffer.setBindingIndex(*this, index); }
+    void setCandidateBufferBindingIndex(uint index) { m_setShaderStorageBlockBinding(m_candidate_buffer, index); }
 
-    [[nodiscard]]
-    uint getCountBufferBindingIndex() const {return m_count_buffer.getBindingIndex(); }
-    void setCountBufferBindingIndex(uint index) { m_count_buffer.setBindingIndex(*this, index); }
+    void setCountBufferBindingIndex(uint index) { m_setShaderStorageBlockBinding(m_count_buffer, index); }
+
     [[nodiscard]]
     static constexpr GL::GLsizeiptr getCountBufferMemoryRequirement(GL::GLintptr number_of_classes)
     {
         return (1 + number_of_classes) * sizeof(uint);
     }
 
-    [[nodiscard]]
-    uint getIndexBufferBindingIndex() const { return m_index_buffer.getBindingIndex(); }
-    void setIndexBufferBindingIndex(uint index) { m_index_buffer.setBindingIndex(*this, index); }
+    void setIndexBufferBindingIndex(uint index) { m_setShaderStorageBlockBinding(m_index_buffer, index); }
+
     [[nodiscard]]
     static constexpr GL::GLsizeiptr getIndexBufferMemoryRequirement(GL::GLintptr number_of_candidates)
     {
@@ -38,10 +34,10 @@ public:
     }
 
 private:
-    UniformLocation m_class_index;
-    ShaderStorageBlock m_candidate_buffer;
-    ShaderStorageBlock m_count_buffer;
-    ShaderStorageBlock m_index_buffer;
+    UniformLocation m_class_index {m_getUniformLocation("u_class_index")};
+    ShaderStorageBlockIndex m_candidate_buffer {m_getShaderStorageBlockIndex("CandidateBuffer")};
+    ShaderStorageBlockIndex m_count_buffer {m_getShaderStorageBlockIndex("CountBuffer")};
+    ShaderStorageBlockIndex m_index_buffer {m_getShaderStorageBlockIndex("IndexBuffer")};
 };
 
 } // placement

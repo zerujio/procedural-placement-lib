@@ -45,18 +45,12 @@ public:
 
     void setWorkGroupPatternColumn(uint column_index, const glm::vec2* column_values)
     {
-        m_setUniform(m_work_group_pattern.get() + column_index * work_group_size.y, work_group_size.y, column_values);
+        m_setUniform(m_work_group_pattern.value + column_index * work_group_size.y, work_group_size.y, column_values);
     }
 
-    void setHeightmapTextureUnit(GL::GLuint texture_unit) { m_heightmap_tex.setTextureUnit(*this, texture_unit); }
+    void setHeightmapTextureUnit(GL::GLuint texture_unit) { m_setUniform<int>(m_heightmap_tex, texture_unit); }
 
-    [[nodiscard]]
-    GL::GLuint getHeightmapTextureUnit() const { return m_heightmap_tex.getTextureUnit(); }
-
-    void setCandidateBufferBindingIndex(GL::GLuint index) { m_candidate_buf.setBindingIndex(*this, index); }
-
-    [[nodiscard]]
-    GL::GLuint getCandidateBufferBindingIndex() const { m_candidate_buf.getBindingIndex(); }
+    void setCandidateBufferBindingIndex(GL::GLuint index) { m_setShaderStorageBlockBinding(m_candidate_buf, index); }
 
     [[nodiscard]]
     static constexpr GL::GLsizeiptr getCandidateBufferSizeRequirement(glm::uvec3 num_work_groups)
@@ -64,10 +58,7 @@ public:
         return s_calculateBufferSize(num_work_groups, sizeof(glm::vec4));
     }
 
-    void setWorldUVBufferBindingIndex(GL::GLuint index) { m_world_uv_buf.setBindingIndex(*this, index); }
-
-    [[nodiscard]]
-    GL::GLuint getWorldUVBufferBindingIndex() const { m_world_uv_buf.getBindingIndex(); }
+    void setWorldUVBufferBindingIndex(GL::GLuint index) { m_setShaderStorageBlockBinding(m_world_uv_buf, index); }
 
     [[nodiscard]]
     static constexpr GL::GLsizeiptr getWorldUVBufferSizeRequirement(glm::uvec3 num_work_groups)
@@ -75,9 +66,7 @@ public:
         return s_calculateBufferSize(num_work_groups, sizeof(glm::vec2));
     }
 
-    void setDensityBufferBindingIndex(GL::GLuint index) { m_density_buf.setBindingIndex(*this, index); }
-
-    [[nodiscard]] GL::GLuint getDensityBufferBindingIndex() const { m_density_buf.getBindingIndex(); }
+    void setDensityBufferBindingIndex(GL::GLuint index) { m_setShaderStorageBlockBinding(m_density_buf, index); }
 
     [[nodiscard]]
     static constexpr GL::GLsizeiptr getDensityBufferMemoryRequirement(glm::uvec3 num_work_groups)
@@ -93,15 +82,15 @@ private:
         return num_invocations.x * num_invocations.y * element_size;
     }
 
-    UniformLocation m_footprint;
-    UniformLocation m_world_scale;
-    UniformLocation m_work_group_scale;
-    UniformLocation m_work_group_offset;
-    UniformLocation m_work_group_pattern;
-    TextureSampler m_heightmap_tex;
-    ShaderStorageBlock m_candidate_buf;
-    ShaderStorageBlock m_world_uv_buf;
-    ShaderStorageBlock m_density_buf;
+    UniformLocation m_footprint { m_getUniformLocation("u_footprint") };
+    UniformLocation m_world_scale { m_getUniformLocation("u_world_scale") };
+    UniformLocation m_work_group_scale { m_getUniformLocation("u_work_group_scale") };
+    UniformLocation m_work_group_offset { m_getUniformLocation("u_work_group_offset") };
+    UniformLocation m_work_group_pattern { m_getUniformLocation("u_work_group_pattern") };
+    UniformLocation m_heightmap_tex { m_getUniformLocation("u_heightmap") };
+    ShaderStorageBlockIndex m_candidate_buf { m_getShaderStorageBlockIndex("CandidateBuffer") };
+    ShaderStorageBlockIndex m_world_uv_buf { m_getShaderStorageBlockIndex("WorldUVBuffer") };
+    ShaderStorageBlockIndex m_density_buf { m_getShaderStorageBlockIndex("DensityBuffer") };
 };
 
 } // placement

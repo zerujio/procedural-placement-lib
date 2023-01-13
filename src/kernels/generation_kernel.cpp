@@ -1,4 +1,4 @@
-#include "generation_kernel.hpp"
+#include "placement/kernel/generation_kernel.hpp"
 
 static constexpr auto source_string = R"gl(
 #version 450 core
@@ -56,16 +56,5 @@ void main()
 
 namespace placement {
 
-NewGenerationKernel::NewGenerationKernel() : ComputeKernel(source_string),
-                                       m_footprint(*this, "u_footprint"),
-                                       m_world_scale(*this, "u_world_scale"),
-                                       m_work_group_scale(*this, "u_work_group_scale"),
-                                       m_work_group_offset(*this, "u_work_group_offset"),
-                                       m_work_group_pattern(*this, "u_work_group_pattern"),
-                                       m_heightmap_tex(*this, "u_heightmap"),
-                                       m_candidate_buf(*this, "CandidateBuffer"),
-                                       m_world_uv_buf(*this, "WorldUVBuffer"),
-                                       m_density_buf(*this, "DensityBuffer")
-{}
-
+NewGenerationKernel::NewGenerationKernel() : ComputeKernel(source_string) {}
 } // placement

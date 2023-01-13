@@ -1,4 +1,4 @@
-#include "evaluation_kernel.hpp"
+#include "placement/kernel/evaluation_kernel.hpp"
 
 static constexpr auto source_string = R"gl(
 #version 450 core
@@ -51,13 +51,6 @@ void main()
 
 namespace placement {
 
-EvaluationKernel::EvaluationKernel() : ComputeKernel(source_string),
-                                       m_density_map(*this, "u_density_map"),
-                                       m_class_index(*this, "u_class_index"),
-                                       m_dithering_matrix(*this, "u_dithering_matrix"),
-                                       m_candidate_buffer(*this, "CandidateBuffer"),
-                                       m_world_uv_buffer(*this, "WorldUVBuffer"),
-                                       m_density_buffer(*this, "world")
-{}
+EvaluationKernel::EvaluationKernel() : ComputeKernel(source_string) {}
 
 } // placement

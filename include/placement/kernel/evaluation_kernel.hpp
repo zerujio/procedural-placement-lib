@@ -36,32 +36,24 @@ public:
 
     void setDitheringMatrixColumn(uint column_index, const glm::vec2* column_values)
     {
-        m_setUniform(m_dithering_matrix.get() + column_index * work_group_size.y, work_group_size.y, column_values);
+        m_setUniform(m_dithering_matrix.value + column_index * work_group_size.y, work_group_size.y, column_values);
     }
 
-    [[nodiscard]]
-    uint getDensityMapTextureUnit() const { return m_density_map.getTextureUnit(); }
-    void setDensityMapTextureUnit(uint index) { m_density_map.setTextureUnit(*this, index); }
+    void setDensityMapTextureUnit(uint index) { m_setUniform<int>(m_density_map, index); }
 
-    [[nodiscard]]
-    uint getCandidateBufferBindingIndex() const { return m_candidate_buffer.getBindingIndex(); }
-    void setCandidateBufferBindingIndex(uint index) { m_candidate_buffer.setBindingIndex(*this, index); }
+    void setCandidateBufferBindingIndex(uint index) { m_setShaderStorageBlockBinding(m_candidate_buffer, index); }
 
-    [[nodiscard]]
-    uint getWorldUVBufferBindingIndex() const { return m_world_uv_buffer.getBindingIndex(); }
-    void setWorldUVBufferBindingIndex(uint index) { m_world_uv_buffer.setBindingIndex(*this, index); }
+    void setWorldUVBufferBindingIndex(uint index) { m_setShaderStorageBlockBinding(m_world_uv_buffer, index); }
 
-    [[nodiscard]]
-    uint getDensityBufferBindingIndex() const {return m_density_buffer.getBindingIndex(); }
-    void setDensityBufferBindingIndex(uint index) { m_density_buffer.setBindingIndex(*this, index); }
+    void setDensityBufferBindingIndex(uint index) { m_setShaderStorageBlockBinding(m_density_buffer, index); }
 
 private:
-    TextureSampler m_density_map;
-    UniformLocation m_class_index;
-    UniformLocation m_dithering_matrix;
-    ShaderStorageBlock m_candidate_buffer;
-    ShaderStorageBlock m_world_uv_buffer;
-    ShaderStorageBlock m_density_buffer;
+    UniformLocation m_density_map {m_getUniformLocation("u_density_map")};
+    UniformLocation m_class_index {m_getUniformLocation("u_class_index")};
+    UniformLocation m_dithering_matrix {m_getUniformLocation("u_dithering_matrix")};
+    ShaderStorageBlockIndex m_candidate_buffer {m_getShaderStorageBlockIndex("CandidateBuffer")};
+    ShaderStorageBlockIndex m_world_uv_buffer {m_getShaderStorageBlockIndex("WorldUVBuffer")};
+    ShaderStorageBlockIndex m_density_buffer {m_getShaderStorageBlockIndex("DensityBuffer")};
 };
 
 } // placement

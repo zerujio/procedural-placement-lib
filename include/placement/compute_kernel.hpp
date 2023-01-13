@@ -38,7 +38,25 @@ protected:
 
     // Various utility classes
 
-    class ProgramResourceIndexBase
+    using Interface = GL::Program::Interface;
+
+    [[nodiscard]]
+    GLuint m_getResourceIndex(Interface interface, const char* name) const;
+
+    template<Interface I>
+    struct ResourceIndex
+    {
+        GLuint value;
+    };
+
+    template<Interface I>
+    [[nodiscard]]
+    ResourceIndex<I> m_getResourceIndex(const char* name) const
+    {
+        return {m_getResourceIndex(I, name)};
+    }
+
+    class [[deprecated("Use resource query functions.")]] ProgramResourceIndexBase
     {
     public:
         [[nodiscard]] auto get() const
@@ -54,7 +72,7 @@ protected:
 
     /// Queries and stores the index for some program resource.
     template<GL::ProgramHandle::Interface Interface>
-    class ProgramResourceIndex : public ProgramResourceIndexBase
+    class [[deprecated]] ProgramResourceIndex : public ProgramResourceIndexBase
     {
     public:
         ProgramResourceIndex(const ComputeKernel &kernel, const char *resource_name) :
@@ -62,7 +80,34 @@ protected:
         {}
     };
 
-    class InterfaceBlockBase
+
+    using UniformBlockIndex = ResourceIndex<Interface::uniform_block>;
+
+    [[nodiscard]]
+    UniformBlockIndex m_getUniformBlockIndex(const char* name) const
+    {
+        return m_getResourceIndex<Interface::uniform_block>(name);
+    }
+
+    void m_setUniformBlockBinding(UniformBlockIndex resource_index, uint binding_index) const
+    {
+        m_program.setUniformBlockBinding(resource_index.value, binding_index);
+    }
+
+    using ShaderStorageBlockIndex = ResourceIndex<Interface::shader_storage_block>;
+
+    [[nodiscard]]
+    ShaderStorageBlockIndex m_getShaderStorageBlockIndex(const char* name) const
+    {
+        return m_getResourceIndex<Interface::shader_storage_block>(name);
+    }
+
+    void m_setShaderStorageBlockBinding(ResourceIndex<Interface::shader_storage_block> resource_index, uint binding_index) const
+    {
+        m_program.setShaderStorageBlockBinding(resource_index.value, binding_index);
+    }
+
+    class [[deprecated]] InterfaceBlockBase
     {
     public:
         /**
@@ -92,7 +137,7 @@ protected:
 
     /// Lightweight object for manipulating uniform and shader storage interface block binding points.
     template<GL::ProgramHandle::Interface InterfaceType>
-    class InterfaceBlock : public InterfaceBlockBase
+    class [[deprecated]] InterfaceBlock : public InterfaceBlockBase
     {
         static_assert(InterfaceType == Type::uniform_block || InterfaceType == Type::shader_storage_block,
                       "An interface block must be either a uniform block or a shader storage block");
@@ -117,31 +162,56 @@ protected:
         }
     };
 
-    using UniformBlock = InterfaceBlock<GL::ProgramHandle::Interface::uniform_block>;
-    using ShaderStorageBlock = InterfaceBlock<GL::ProgramHandle::Interface::shader_storage_block>;
-
-    /// Queries and stores the location of a uniform.
     struct UniformLocation
     {
-    public:
-        UniformLocation(const ComputeKernel &kernel, const char *uniform_name);
+        GLint value {-1};
 
-        [[nodiscard]] auto get() const -> GL::GLint
-        { return m_location; }
-
-        [[nodiscard]] auto isValid() const -> bool
-        { return m_location >= 0; }
-
-        explicit operator bool() const
-        { return isValid(); }
-
-    private:
-        GL::GLint m_location{-1};
+        [[nodiscard]] operator bool() const { return value > -1; }
     };
 
+    [[nodiscard]]
+    UniformLocation m_getUniformLocation(const char* name) const;
+
+    template<typename T>
+    void m_setUniform(GL::GLint location, T value) const
+    {
+        m_program.setUniform(location, value);
+    }
+
+    template<typename T>
+    void m_setUniform(UniformLocation location, T value) const
+    {
+        m_setUniform(location.value, value);
+    }
+
+    template<typename T>
+    void m_setUniform(GL::GLint location, GL::GLsizei count, const T *values) const
+    {
+        m_program.setUniform(location, count, values);
+    }
+
+    template<typename T>
+    void m_setUniform(UniformLocation location, GL::GLsizei count, const T *values) const
+    {
+        m_setUniform(location.value, count, values);
+    }
+
+    template<typename T>
+    void m_setUniformMatrix(GL::GLint location, GL::GLsizei count, GL::GLboolean transpose,
+                            const T *values) const
+    {
+        m_program.setUniformMatrix(location, count, transpose, values);
+    }
+
+    template<typename T>
+    void m_setUniformMatrix(UniformLocation location, GL::GLsizei count, GL::GLboolean transpose,
+                            const T *values) const
+    {
+        m_setUniformMatrix(location.value, count, transpose, values);
+    }
 
     /// Lightweight object for setting and querying the texture unit of a sampler uniform
-    class TextureSampler
+    class [[deprecated]] TextureSampler
     {
     public:
         TextureSampler(const ComputeKernel &kernel, UniformLocation location) : m_location(location)
@@ -150,7 +220,7 @@ protected:
         }
 
         TextureSampler(const ComputeKernel &kernel, const char *name)
-                : TextureSampler(kernel, UniformLocation(kernel, name))
+                : TextureSampler(kernel, kernel.m_getUniformLocation(name))
         {}
 
         /// Set the texture unit for this sampler
@@ -173,44 +243,6 @@ protected:
         UniformLocation m_location;
         GL::GLuint m_tex_unit{0};
     };
-
-    template<typename T>
-    void m_setUniform(GL::GLint location, T value) const
-    {
-        m_program.setUniform(location, value);
-    }
-
-    template<typename T>
-    void m_setUniform(UniformLocation location, T value) const
-    {
-        m_setUniform(location.get(), value);
-    }
-
-    template<typename T>
-    void m_setUniform(GL::GLint location, GL::GLsizei count, const T *values) const
-    {
-        m_program.setUniform(location, count, values);
-    }
-
-    template<typename T>
-    void setUniform(UniformLocation location, GL::GLsizei count, const T *values) const
-    {
-        m_setUniform(location.get(), count, values);
-    }
-
-    template<typename T>
-    void m_setUniformMatrix(GL::GLint location, GL::GLsizei count, GL::GLboolean transpose,
-                            const T *values) const
-    {
-        m_program.setUniformMatrix(location, count, transpose, values);
-    }
-
-    template<typename T>
-    void m_setUniformMatrix(UniformLocation location, GL::GLsizei count, GL::GLboolean transpose,
-                            const T *values) const
-    {
-        m_setUniformMatrix(location.get(), count, transpose, values);
-    }
 
 private:
     GL::Program m_program;

@@ -1,4 +1,4 @@
-#include "indexation_kernel.hpp"
+#include "placement/kernel/indexation_kernel.hpp"
 
 static constexpr auto source_string = R"gl(
 #version 450 core
@@ -97,10 +97,5 @@ void main()
 )gl";
 
 namespace placement {
-IndexationKernel::IndexationKernel() : ComputeKernel(source_string),
-                                       m_class_index(*this, "u_class_index"),
-                                       m_candidate_buffer(*this, "CandidateBuffer"),
-                                       m_count_buffer(*this, "CountBuffer"),
-                                       m_index_buffer(*this, "IndexBuffer")
-{}
+IndexationKernel::IndexationKernel() : ComputeKernel(source_string) {}
 } // placement
