@@ -6,7 +6,10 @@ add_library(procedural-placement-lib STATIC
         compute_kernel.cpp
         placement_pipeline_kernel.cpp
         disk_distribution_generator.cpp
-        kernels/generation_kernel.cpp ../include/placement/kernel/generation_kernel.hpp kernels/evaluation_kernel.cpp ../include/placement/kernel/evaluation_kernel.hpp kernels/indexation_kernel.cpp ../include/placement/kernel/indexation_kernel.hpp kernels/copy_kernel.cpp ../include/placement/kernel/copy_kernel.hpp)
+        kernels/generation_kernel.cpp
+        kernels/evaluation_kernel.cpp
+        kernels/indexation_kernel.cpp
+        kernels/copy_kernel.cpp)
 
 target_include_directories(procedural-placement-lib
         PUBLIC ${PROJECT_SOURCE_DIR}/include)
