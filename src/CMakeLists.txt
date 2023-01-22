@@ -3,6 +3,7 @@ add_library(procedural-placement-lib STATIC
         generation_kernel.cpp
         reduction_kernel.cpp
         placement_pipeline.cpp
+        placement_result.cpp
         compute_kernel.cpp
         placement_pipeline_kernel.cpp
         disk_distribution_generator.cpp

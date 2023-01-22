@@ -9,6 +9,7 @@
 #include <chrono>
 #include <utility>
 #include <vector>
+#include <memory>
 
 namespace placement {
 
@@ -34,9 +35,9 @@ class ResultBuffer final
 public:
     using GLsizeiptr = GL::GLsizeiptr;
 
-    GLsizeiptr size;        //<! Total size of the buffer, in bytes.
-    GLsizeiptr num_classes; //<! Number of placement classes in the buffer.
-    GL::Buffer gl_object;   //<! GL buffer object.
+    unsigned int num_classes;   ///< Number of placement classes in the buffer.
+    GLsizeiptr size;            ///< Total size of the buffer, in bytes.
+    GL::Buffer gl_object;       ///< GL buffer object.
 };
 
 /**
@@ -56,81 +57,170 @@ public:
         uint class_index;
     };
 
-    static constexpr GLsizeiptr element_size = sizeof(Element);
+    explicit Result(ResultBuffer &&buffer);
 
-    /// Access the result buffer struct.
+    /// Get the number of placement classes in the result buffer.
     [[nodiscard]]
-    const ResultBuffer& getBuffer() const { return m_buffer; }
+    uint getNumClasses() const noexcept
+    { return m_buffer.num_classes; }
 
-    /// Get the number of placement classes in this result.
+    /// Total number of elements in the element array.
     [[nodiscard]]
-    uint getNumClasses() const { return m_buffer.num_classes; }
+    uint getElementArrayLength() const noexcept
+    { return m_index_offset.back(); }
 
-    /// Get the total number of elements in the buffer.
+    /// Get the byte offset within the result buffer at which the element array starts.
     [[nodiscard]]
-    uint getTotalElementCount() const { return m_index_offsets.back(); }
+    GLintptr getElementArrayBufferOffset() const noexcept
+    { return m_buffer.num_classes * static_cast<GLintptr>(sizeof(uint)); }
 
-    /// Get the range within the buffer that contains all elements.
-    GL::Buffer::Range getElementBufferRange() const { return {m_base_offset, m_index_offsets.back() * element_size}; }
+    /**
+     * @brief Access the index offsets for each placement class.
+     * @return A const reference to a vector containing the index offsets for each class.
+     *
+     * The index offset of a class indicates where the elements of a class start within the element array. The index
+     * offset vector contains num_classes + 1 elements, where the each element corresponds to the index offset of the
+     * class with the same index. The last value of the vector is the length of the array.
+     */
+    [[nodiscard]]
+    const std::vector<uint> &getIndexOffsets() const noexcept
+    { return m_index_offset; }
+
+    /// Same as `getIndexOffsets()[class_index]`.
+    [[nodiscard]]
+    uint getClassIndexOffset(uint class_index) const noexcept
+    { return m_index_offset[class_index]; }
 
     /// Get the number of elements in a given placement class.
     [[nodiscard]]
-    uint getClassElementCount(uint class_index) const
-    { return m_index_offsets[class_index + 1] - m_index_offsets[class_index]; }
+    uint getClassElementCount(uint class_index) const noexcept
+    { return getClassRangeElementCount(class_index, class_index + 1); }
 
-    /// Get the element index offset for a specific placement class.
-    [[nodiscard]] uint getClassIndexOffset(uint class_index) const { return m_index_offsets[class_index]; }
+    /**
+     * @brief Get the element count of multiple consecutive classes.
+     * @param begin_class first class of the range.
+     * @param end_class Last class of the range, non inclusive.
+     * @return The sum of all the element counts of each class in the range [begin_class, end_class).
+     */
+    [[nodiscard]]
+    uint getClassRangeElementCount(uint begin_class, uint end_class) const noexcept
+    { return m_index_offset[end_class] - m_index_offset[begin_class]; }
 
-    [[nodiscard]] GLintptr getClassOffset(uint class_index) const
-    { return m_base_offset + getClassIndexOffset(class_index) * element_size; }
+    /**
+     * @brief Copy elements of classes in range [begin_class, end_class) from the element array to another buffer.
+     * @param begin_class The start of the class range.
+     * @param end_class The end of the class range, not included in it.
+     * @param buffer A handle to a GL buffer object.
+     * @param offset offset into @p at which to begin copying the data.
+     * @return the number of elements copied. This value can be calculated beforehand with getClassRangeElementCount().
+     */
+    uint copyClassRange(uint begin_class, uint end_class, GL::BufferHandle buffer, GLintptr offset = 0) const;
 
-    [[nodiscard]] GLsizeiptr getClassSize(uint class_index) const
-    { return getClassElementCount(class_index) * element_size; }
+    uint copyClassRange(uint begin_class, uint end_class, uint buffer, GLintptr offset = 0) const
+    { return copyClassRange(begin_class, end_class, static_cast<GL::BufferHandle>(buffer), buffer); }
 
-    /// Get the range within the buffer that contains all elements of a specific class.
-    [[nodiscard]] GL::Buffer::Range getClassBufferRange(uint class_index) const
-    { return {getClassOffset(class_index), getClassSize(class_index)}; }
+    /**
+     * @brief Copy elements of class in range [begin_class, end_class) to CPU memory.
+     * @tparam Iter An output iterator type, such that its value type is copy assignable from an instance of Element.
+     * @param begin_class index of the first class in the range.
+     * @param end_class index of the last class in the range. This class class is not included in it.
+     * @param out_iter An iterator at which to start writing the values read from the element array.
+     * @return the number of elements copied. This value can be calculated beforehand with getClassRangeElementCount().
+     */
+    template<typename Iter>
+    uint copyClassRange(uint begin_class, uint end_class, Iter out_iter) const
+    {
+        constexpr GLsizeiptr element_size = sizeof(Element);
+        const uint element_count = getClassRangeElementCount(begin_class, end_class);
+        const GL::Buffer::Range map_range
+        {
+            getElementArrayBufferOffset() + getClassIndexOffset(begin_class) * element_size,
+            element_count * element_size
+        };
+        auto ptr = static_cast<const Element*>(m_buffer.gl_object.mapRange(map_range, GL::Buffer::AccessFlags::read));
+
+        for (auto in_iter = ptr; in_iter != ptr + element_count;)
+            *out_iter++ = *in_iter++;
+
+        m_buffer.gl_object.unmap();
+
+        return element_count;
+    }
+
+    /**
+     * @brief Copy all valid elements from the result buffer to another GPU buffer.
+     * @param buffer A handle to a GL buffer object.
+     * @param offset Byte offset into the write buffer.
+     * @return number of elements copied
+     */
+    uint copyAll(GL::BufferHandle buffer, GLintptr offset = 0) const
+    { return copyClassRange(0, m_buffer.num_classes, buffer, offset); }
+
+    uint copyAll(uint buffer, GLintptr offset = 0) const
+    { return copyAll(static_cast<GL::BufferHandle>(buffer), offset); }
+
+    /// Copy all elements to host.
+    template<typename Iter>
+    uint copyAll(Iter out_iter) const
+    { return copyClassRange(0, m_buffer.num_classes, out_iter); }
+
+    /// Copy all elements of a specific class to another buffer.
+    uint copyClass(uint class_index, GL::BufferHandle buffer, GLintptr offset = 0) const
+    { return copyClassRange(class_index, class_index + 1, buffer, offset); }
+
+    uint copyClass(uint class_index, uint buffer, GLintptr offset = 0) const
+    { return copyClass(class_index, static_cast<GL::BufferHandle>(buffer), offset); }
+
+    /// copy all elements of a specific class to host.
+    template<typename Iter>
+    uint copyClass(uint class_index, Iter out_iter) const
+    { return copyClassRange(class_index, class_index + 1, out_iter); }
 
 private:
-    ResultBuffer m_buffer;
-    GLintptr m_base_offset;
-    std::vector<uint> m_index_offsets;
+    ResultBuffer m_buffer {0, 0, GL::Buffer()};
+    std::vector<uint> m_index_offset {};
 };
 
 /// Contains the results of a placement operation which may not have finished execution yet.
 class FutureResult final
 {
 public:
-    FutureResult(ResultBuffer&& result_buffer, GL::Sync&& sync);
+    FutureResult(ResultBuffer &&result_buffer, GL::Sync &&sync);
 
-    /// Check if results are ready.
+    /// Check if results are available.
     [[nodiscard]]
-    bool isReady() const { return wait(std::chrono::nanoseconds::zero()); }
+    bool isReady() const
+    { return wait(std::chrono::nanoseconds::zero()); }
 
     /// Wait until results are ready, or until the timeout expires.
     [[nodiscard]]
     bool wait(std::chrono::nanoseconds timeout) const;
 
     /**
+     * @brief Read results, if available, or block execution until they are.
+     * This operation moves out the ResultBuffer, leaving this object in an empty state.
+     * @return a Result structure that contains the buffer and information about the layout of the data.
+     */
+    [[nodiscard]] Result readResult()
+    { return Result(moveResultBuffer()); }
+
+    /**
      * @brief Access the results of the placement operation.
-     * It is valid to access the results _before_ computation has finished (isReady() or wait() return true), but doing
-     * so may have significant CPU-side latency and performance cost, depending on the operation. As a general rule,
-     * GPU-only operations (e.g. using the buffer for vertex attributes or copying to another buffer) can be executed
-     * with no additional cost, whereas "read back" operations (e.g. using glBufferSubData to read the buffer's contents
-     * ) will likely cause a CPU-GPU sync and a stall in the pipeline.
-     *
-     * Note that for any of these operations to produce correct results, the relevant memory barriers must be
-     * issued.
+     * Assuming that the appropriate memory barriers have been issued, it is valid behavior to operate on the result
+     * buffer before computation of the results has finished. However, it is important to keep in mind that most
+     * operations which move data from device to host, such as reading the buffer with glGetBufferSubData(), will
+     * block the CPU thread in order to wait for the data to be available. On the other hand, using the data from within
+     * the GPU, such as when reading vertex attributes from the buffer, will not block execution on the calling thread.
      *
      * @see ResultBuffer
      * @return A const reference to the ResultBuffer struct.
      */
     [[nodiscard]]
-    const ResultBuffer& getResult() const { return m_buffer; }
+    const ResultBuffer &getResultBuffer() const
+    { return m_buffer; }
 
-    /// Move out the result buffer struct and, consequently, transfer ownership of the contained GL buffer object.
-    [[nodiscard]]
-    ResultBuffer moveResult() { return std::move(m_buffer); }
+    [[nodiscard]] ResultBuffer moveResultBuffer()
+    { return std::move(m_buffer); }
 
 private:
     ResultBuffer m_buffer;

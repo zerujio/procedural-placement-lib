@@ -180,6 +180,13 @@ void PlacementPipeline::setRandomSeed(uint seed)
     m_generation_kernel.setPositionStencil(positions);
 }
 
+PlacementResult
+PlacementPipeline::computePlacement(const WorldData &world_data, const LayerData &layer_data, glm::vec2 lower_bound,
+                                    glm::vec2 upper_bound)
+{
+    return nullptr;
+}
+
 
 // PlacementPipeline::BufferHandle
 

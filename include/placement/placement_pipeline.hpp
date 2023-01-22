@@ -3,6 +3,11 @@
 
 #include "generation_kernel.hpp"
 #include "reduction_kernel.hpp"
+#include "placement_result.hpp"
+#include "kernel/generation_kernel.hpp"
+#include "kernel/evaluation_kernel.hpp"
+#include "kernel/indexation_kernel.hpp"
+#include "kernel/copy_kernel.hpp"
 
 #include "glutils/sync.hpp"
 #include "glutils/buffer.hpp"
@@ -51,86 +56,6 @@ struct WorldData
     GL::GLuint heightmap;
 };
 
-/**
- * @brief Wraps an OpenGL buffer containing the result of a placement operation.
- * Note that the results are not necessarily available at the moment the PlacementResult object is created. If
- * the results are not ready, most operations will cause a stall in the CPU thread in order to synchronize with the GPU.
- * To check if the placement results are available, use isReady(). To wait until results are available, use wait().
- */
-class PlacementResult final
-{
-public:
-    PlacementResult(uint num_classes, GL::Buffer &&buffer, GL::Sync &&sync);
-
-    /**
-     * @brief Wait until the results are ready or the timer expires.
-     * @param timeout Maximum amount of time to wait for the results.
-     * @return true if the results became available before @p timeout nanoseconds, false otherwise.
-     */
-    [[nodiscard]] bool wait(std::chrono::nanoseconds timeout) const;
-
-    [[nodiscard]] bool wait(std::uint64_t timeout_ns) const
-    { return wait(std::chrono::nanoseconds(timeout_ns)); }
-
-    /// Check if results are available.
-    [[nodiscard]] bool isReady() const
-    { return wait(std::chrono::nanoseconds::zero()); }
-
-    [[nodiscard]] uint getNumClasses() const
-    { return m_num_classes; }
-
-    /// Get the total number of elements generated.
-    [[nodiscard]] std::size_t getSize() const;
-
-    /// Get the number of elements generated for a specific class.
-    [[nodiscard]] std::size_t getClassSize(std::size_t) const;
-
-    /// Copy all elements from a specific class to host (CPU) memory.
-    [[nodiscard]] std::vector<glm::vec3> copyClassToHost(unsigned int class_index) const;
-
-    /// Copy results to host (CPU) memory.
-    [[nodiscard]] std::vector<std::vector<glm::vec3>> copyToHost() const;
-
-    /**
-     * @brief Copy ALL data to another buffer.
-     * @param buffer_name a GL buffer into which the results will be copied.
-     *
-     * The data within the buffer is formatted as
-     *
-     *  struct Results
-     *  {
-     *      uint count;
-     *      uint class_count[N];
-     *      vec4 elements[count];
-     *  };
-     *
-     *  where
-     *
-     *  - `N` is the number of object classes.
-     *  - `count` is the total element count across all classes.
-     *  - `class_count` is an array containing the element count for each class; i.e. `class_count[i]` is the number
-     *  of elements of class `i`.
-     *  - `elements` contains all generated elements. Element data is laid out contiguously in the array and ordered
-     *  by class. This means that elements from class 0 are in the index range [0, class_count[0]) of the array,
-     *  those from class 1 lay in the range [class_count[0], class_count[0] + class_count[1]), etc.
-     */
-    void copyData(GL::GLuint buffer_name) const;
-
-    /// Copy the element count struct to another buffer.
-    void copyCounts(GL::GLuint buffer_name) const;
-
-    /// Copy all elements to another buffer.
-    void copyElements(GL::GLuint buffer_name, GL::GLsizeiptr offset = 0u) const;
-
-    /// Copy all elements from a specific class to another buffer.
-    void copyClassElements(unsigned int class_index, GL::GLuint buffer_name, GL::GLsizeiptr offset = 0u) const;
-
-private:
-    uint m_num_classes;
-    GL::Sync m_sync;
-    GL::Buffer m_buffer;
-};
-
 class PlacementPipeline
 {
 public:
@@ -157,11 +82,8 @@ public:
 
     /// Multiclass placement.
     [[nodiscard]]
-    PlacementResult computePlacement(const WorldData &world_data, const LayerData &layer_data,
-                                     glm::vec2 lower_bound, glm::vec2 upper_bound)
-    {
-        return PlacementResult();
-    }
+    FutureResult computePlacement(const WorldData &world_data, const LayerData &layer_data,
+                                  glm::vec2 lower_bound, glm::vec2 upper_bound);
 
     /**
      * @brief The heightmap texture.
