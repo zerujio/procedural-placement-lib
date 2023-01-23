@@ -56,5 +56,5 @@ void main()
 
 namespace placement {
 
-NewGenerationKernel::NewGenerationKernel() : ComputeKernel(source_string) {}
+GenerationKernel::GenerationKernel() : ComputeKernel(source_string) {}
 } // placement

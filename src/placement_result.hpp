@@ -177,8 +177,8 @@ public:
     { return copyClassRange(class_index, class_index + 1, out_iter); }
 
 private:
-    ResultBuffer m_buffer {0, 0, GL::Buffer()};
-    std::vector<uint> m_index_offset {};
+    ResultBuffer m_buffer;
+    std::vector<uint> m_index_offset;
 };
 
 /// Contains the results of a placement operation which may not have finished execution yet.

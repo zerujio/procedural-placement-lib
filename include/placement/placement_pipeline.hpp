@@ -1,8 +1,6 @@
 #ifndef PROCEDURALPLACEMENTLIB_PLACEMENT_PIPELINE_HPP
 #define PROCEDURALPLACEMENTLIB_PLACEMENT_PIPELINE_HPP
 
-#include "generation_kernel.hpp"
-#include "reduction_kernel.hpp"
 #include "placement_result.hpp"
 #include "kernel/generation_kernel.hpp"
 #include "kernel/evaluation_kernel.hpp"
@@ -16,6 +14,7 @@
 
 #include <vector>
 #include <chrono>
+#include <optional>
 
 namespace placement {
 
@@ -135,7 +134,7 @@ public:
     void setBaseTextureUnit(GL::GLuint index);
 
     /// The number of different shader storage buffer binding points used by the placement compute shaders.
-    static constexpr auto required_shader_storage_binding_points = 3u;
+    static constexpr auto required_shader_storage_binding_points = 6u;
 
     /**
      * @brief Configures the shader storage buffer binding points the pipeline will use.
@@ -165,27 +164,29 @@ public:
 
 private:
 
-    void m_setCandidateBufferBindingIndex(GL::GLuint index);
+    [[nodiscard]] uint m_getCandidateBufferBindingIndex() const noexcept { return m_base_binding_index + 0; }
+    [[nodiscard]] uint m_getDensityBufferBindingIndex() const noexcept { return m_base_binding_index + 1; }
+    [[nodiscard]] uint m_getWorldUVBufferBindingIndex() const noexcept { return m_base_binding_index + 2; }
+    [[nodiscard]] uint m_getIndexBufferBindingIndex() const noexcept { return m_base_binding_index + 3; }
+    [[nodiscard]] uint m_getCountBufferBindingIndex() const noexcept { return m_base_binding_index + 4; }
+    [[nodiscard]] uint m_getOutputBufferBindingIndex() const noexcept { return m_base_binding_index + 5; }
 
-    void m_setIndexBufferBindingIndex(GL::GLuint index);
-
-    void m_setPositionBufferBindingIndex(GL::GLuint index);
+    [[nodiscard]] uint m_getHeightTexUnit() const noexcept { return m_base_tex_unit + 0; }
+    [[nodiscard]] uint m_getDensityTexUnit() const noexcept { return m_base_tex_unit + 1; }
 
     [[nodiscard]] GL::Buffer::Range m_getResultRange() const;
 
-    struct WorldData
-    {
-        unsigned int height_tex{0};
-        unsigned int density_tex{0};
-        glm::vec3 scale{1.0f};
-    } m_world_data;
-
+    uint m_base_tex_unit {0};
+    uint m_base_binding_index {0};
     GenerationKernel m_generation_kernel;
-    IndexAssignmentKernel m_assignment_kernel;
-    IndexedCopyKernel m_copy_kernel;
+    EvaluationKernel m_evaluation_kernel;
+    IndexationKernel m_indexation_kernel;
+    CopyKernel m_copy_kernel;
+
+    static constexpr glm::vec2 s_wg_scale_factor {2.5f};
 
     /// number of valid candidates. Total candidates are equal to m_buffer.getSize()
-    GL::GLsizeiptr m_valid_count = 0;
+    [[deprecated]] GL::GLsizeiptr m_valid_count = 0;
 
     class Buffer
     {
@@ -200,13 +201,15 @@ private:
         [[nodiscard]] GL::GLsizeiptr getCapacity() const
         { return m_capacity; }
 
-        [[nodiscard]] GL::BufferHandle getBuffer() const;
+        [[nodiscard]] GL::BufferHandle getBuffer() const { return m_buffer; }
 
-        [[nodiscard]] GL::Buffer::Range getCandidateRange() const;
+        [[nodiscard]] GL::Buffer::Range getCandidateRange() const { return m_candidate_range; }
 
-        [[nodiscard]] GL::Buffer::Range getIndexRange() const;
+        [[nodiscard]] GL::Buffer::Range getDensityRange() const { return m_density_range; }
 
-        [[nodiscard]] GL::Buffer::Range getPositionRange() const;
+        [[nodiscard]] GL::Buffer::Range getWorldUVRange() const { return m_world_uv_range; }
+
+        [[nodiscard]] GL::Buffer::Range getIndexRange() const { return m_index_range; }
 
     private:
         GL::Buffer m_buffer{};
@@ -214,8 +217,9 @@ private:
         GL::GLsizeiptr m_size{0};
 
         GL::Buffer::Range m_candidate_range;
+        GL::Buffer::Range m_density_range;
+        GL::Buffer::Range m_world_uv_range;
         GL::Buffer::Range m_index_range;
-        GL::Buffer::Range m_position_range;
 
         static constexpr GL::GLsizeiptr s_min_capacity = 64;
 

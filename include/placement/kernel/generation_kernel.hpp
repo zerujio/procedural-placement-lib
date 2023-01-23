@@ -8,12 +8,12 @@
 
 namespace placement {
 
-class NewGenerationKernel final : public ComputeKernel
+class GenerationKernel final : public ComputeKernel
 {
 public:
     static constexpr glm::uvec3 work_group_size {8, 8, 1};
 
-    NewGenerationKernel();
+    GenerationKernel();
 
     void setFootprint(float footprint) { m_setUniform(m_footprint, footprint); }
 

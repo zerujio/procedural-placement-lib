@@ -3,12 +3,15 @@
 
 #include "placement/compute_kernel.hpp"
 
+#include <array>
+
 namespace placement {
 
 class EvaluationKernel final : public ComputeKernel
 {
 public:
     static constexpr glm::uvec3 work_group_size {8, 8, 1};
+    static const std::array<std::array<float, work_group_size.y>, work_group_size.x> default_dithering_matrix;
 
     EvaluationKernel();
 
@@ -22,10 +25,10 @@ public:
     }
 
     template<typename NestedArrayLike>
-    void SetDitheringMatrixColumns(const NestedArrayLike& columns)
+    void setDitheringMatrixColumns(const NestedArrayLike& columns)
     {
         for (uint i = 0; i < work_group_size.x; i++)
-            setWorkGroupPatternColumn(i, columns[i]);
+            setDitheringMatrixColumn(i, columns[i]);
     }
 
     template<typename ArrayLike>
@@ -34,7 +37,7 @@ public:
         setDitheringMatrixColumn(column_index, std::data(column_values));
     }
 
-    void setDitheringMatrixColumn(uint column_index, const glm::vec2* column_values)
+    void setDitheringMatrixColumn(uint column_index, const float* column_values)
     {
         m_setUniform(m_dithering_matrix.value + column_index * work_group_size.y, work_group_size.y, column_values);
     }

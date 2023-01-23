@@ -50,6 +50,48 @@ auto PlacementPipeline::getWorldScale() const -> const glm::vec3 &
     return m_world_data.scale;
 }
 
+FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, const LayerData &layer_data,
+                                                 glm::vec2 lower_bound, glm::vec2 upper_bound)
+{
+    constexpr glm::uvec2 wg_size {GenerationKernel::work_group_size};
+    constexpr auto wg_scale = glm::vec2(wg_size) * s_wg_scale_factor;
+
+    const glm::uvec2 work_group_offset {lower_bound / wg_scale};
+    const glm::uvec2 num_work_groups = 1u + glm::uvec2((upper_bound - lower_bound) / wg_scale);
+
+    const uint candidate_count = num_work_groups.x * num_work_groups.y * wg_size.x * wg_size.y;
+
+    m_buffer.resize(candidate_count);
+
+    constexpr auto ssbo_target = GL::Buffer::IndexedTarget::shader_storage;
+
+    m_buffer.getBuffer().bindRange(ssbo_target, m_getCandidateBufferBindingIndex(), m_buffer.getCandidateRange());
+    m_buffer.getBuffer().bindRange(ssbo_target, m_getDensityBufferBindingIndex(), m_buffer.getDensityRange());
+    m_buffer.getBuffer().bindRange(ssbo_target, m_getWorldUVBufferBindingIndex(), m_buffer.getWorldUVRange());
+
+    gl.BindTextureUnit(m_getHeightTexUnit(), world_data.heightmap);
+
+    m_generation_kernel.setWorldScale(world_data.scale);
+    m_generation_kernel.setFootprint(layer_data.footprint);
+    m_generation_kernel.setWorkGroupOffset(work_group_offset);
+    m_generation_kernel.useProgram();
+
+    gl.DispatchCompute(num_work_groups.x, num_work_groups.y, 1);
+    gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+    m_evaluation_kernel.useProgram();
+    for (std::size_t i = 0; i < layer_data.densitymaps.size(); i++)
+    {
+        gl.BindTextureUnit(m_getDensityTexUnit(), layer_data.densitymaps[i].texture);
+        m_evaluation_kernel.setClassIndex(i);
+
+        gl.DispatchCompute(num_work_groups.x, num_work_groups.y, 1);
+        gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    }
+
+    // TODO: call indexation and copy kernel, create output buffer, return result buffer.
+}
+
 void PlacementPipeline::computePlacement(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound)
 {
     using namespace GL;
@@ -102,33 +144,50 @@ void PlacementPipeline::computePlacement(float footprint, glm::vec2 lower_bound,
 
 void PlacementPipeline::setBaseTextureUnit(GL::GLuint index)
 {
-    m_generation_kernel.setHeightTextureUnit(index);
-    m_generation_kernel.setDensityTextureUnit(index);
+    m_base_tex_unit = index;
+    m_generation_kernel.setHeightmapTextureUnit(m_getHeightTexUnit());
+    m_evaluation_kernel.setDensityMapTextureUnit(m_getDensityTexUnit());
 }
 
 void PlacementPipeline::setBaseShaderStorageBindingPoint(GL::GLuint index)
 {
-    m_setCandidateBufferBindingIndex(index);
-    m_setIndexBufferBindingIndex(index + 1);
-    m_setPositionBufferBindingIndex(index + 2);
-}
+    m_base_binding_index = index;
 
-void PlacementPipeline::m_setCandidateBufferBindingIndex(GL::GLuint index)
-{
-    m_generation_kernel.setCandidateBufferBindingIndex(index);
-    m_assignment_kernel.setCandidateBufferBindingIndex(index);
-    m_copy_kernel.setCandidateBufferBindingIndex(index);
-}
+    // candidate buffer
+    {
+        const auto i = m_getCandidateBufferBindingIndex();
+        m_generation_kernel.setCandidateBufferBindingIndex(i);
+        m_evaluation_kernel.setCandidateBufferBindingIndex(i);
+        m_indexation_kernel.setCandidateBufferBindingIndex(i);
+        m_copy_kernel.setCandidateBufferBindingIndex(i);
+    }
 
-void PlacementPipeline::m_setIndexBufferBindingIndex(GL::GLuint index)
-{
-    m_assignment_kernel.setIndexBufferBindingIndex(index);
-    m_copy_kernel.setIndexBufferBindingIndex(index);
-}
+    // density buffer
+    {
+        const auto j = m_getDensityBufferBindingIndex();
+        m_generation_kernel.setDensityBufferBindingIndex(j);
+        m_evaluation_kernel.setDensityBufferBindingIndex(j);
+    }
 
-void PlacementPipeline::m_setPositionBufferBindingIndex(GL::GLuint index)
-{
-    m_copy_kernel.setPositionBufferBindingIndex(index);
+    // WorldUV buffer
+    {
+        const auto k = m_getWorldUVBufferBindingIndex();
+        m_generation_kernel.setWorldUVBufferBindingIndex(k);
+        m_evaluation_kernel.setWorldUVBufferBindingIndex(k);
+    }
+
+    // Index buffer
+    {
+        const auto l = m_getIndexBufferBindingIndex();
+        m_indexation_kernel.setIndexBufferBindingIndex(l);
+        m_copy_kernel.setIndexBufferBindingIndex(l);
+    }
+
+    // count buffer
+    m_indexation_kernel.setCountBufferBindingIndex(m_getCountBufferBindingIndex());
+
+    // output buffer
+    m_copy_kernel.setOutputBufferBindingIndex(m_getOutputBufferBindingIndex());
 }
 
 std::vector<glm::vec3> PlacementPipeline::copyResultsToCPU() const
@@ -165,9 +224,11 @@ GL::BufferHandle::Range PlacementPipeline::m_getResultRange() const
 void PlacementPipeline::setRandomSeed(uint seed)
 {
     constexpr auto wg_size = GenerationKernel::work_group_size;
-
     // dart throwing algorithm for poisson disk distribution
-    DiskDistributionGenerator generator {1.0f, wg_size * GenerationKernel::s_spacing_factor};
+    const glm::vec2 wg_scale = glm::vec2(wg_size) * glm::vec2(wg_size);
+    m_generation_kernel.setWorkGroupScale(wg_scale);
+
+    DiskDistributionGenerator generator{1.0f, wg_scale};
     generator.setSeed(seed);
     generator.setMaxAttempts(100);
 
@@ -177,39 +238,19 @@ void PlacementPipeline::setRandomSeed(uint seed)
         for (uint j = 0; j < wg_size.y; j++)
             positions[i][j] = generator.generate();
 
-    m_generation_kernel.setPositionStencil(positions);
-}
-
-PlacementResult
-PlacementPipeline::computePlacement(const WorldData &world_data, const LayerData &layer_data, glm::vec2 lower_bound,
-                                    glm::vec2 upper_bound)
-{
-    return nullptr;
+    m_generation_kernel.setWorkGroupPatternColumns(positions);
 }
 
 
-// PlacementPipeline::BufferHandle
+// PlacementPipeline::Buffer
+constexpr GLsizeiptr candidate_size = 4 * sizeof(GLfloat);
+constexpr GLsizeiptr density_size = sizeof(GLfloat);
+constexpr GLsizeiptr world_uv_size = 2 * sizeof(GLfloat);
+constexpr GLsizeiptr index_size = sizeof(unsigned int);
 
 GL::GLsizeiptr PlacementPipeline::Buffer::s_calculateSize(GL::GLsizeiptr capacity)
 {
-    return GenerationKernel::calculateCandidateBufferSize(capacity)
-           + IndexAssignmentKernel::calculateIndexBufferSize(capacity)
-           + IndexedCopyKernel::calculatePositionBufferSize(capacity);
-}
-
-GL::BufferHandle::Range PlacementPipeline::Buffer::getCandidateRange() const
-{
-    return m_candidate_range;
-}
-
-GL::BufferHandle::Range PlacementPipeline::Buffer::getIndexRange() const
-{
-    return m_index_range;
-}
-
-GL::BufferHandle::Range PlacementPipeline::Buffer::getPositionRange() const
-{
-    return m_position_range;
+    return (candidate_size + density_size + world_uv_size + index_size) * capacity;
 }
 
 class PlacementPipeline::Buffer::Allocator
@@ -232,9 +273,10 @@ void PlacementPipeline::Buffer::resize(GL::GLsizeiptr candidate_count)
 
     Allocator a;
 
-    m_index_range = a.allocate(IndexAssignmentKernel::calculateIndexBufferSize(candidate_count));
-    m_candidate_range = a.allocate(GenerationKernel::calculateCandidateBufferSize(candidate_count));
-    m_position_range = a.allocate(IndexedCopyKernel::calculatePositionBufferSize(candidate_count));
+    m_candidate_range = a.allocate(candidate_size * candidate_count);
+    m_density_range = a.allocate(density_size * candidate_count);
+    m_world_uv_range = a.allocate(world_uv_size * candidate_count);
+    m_index_range = a.allocate(index_size * candidate_count);
 }
 
 void PlacementPipeline::Buffer::reserve(GLsizeiptr candidate_count)
@@ -251,32 +293,6 @@ void PlacementPipeline::Buffer::reserve(GLsizeiptr candidate_count)
 
     m_buffer.allocate(new_buffer_size, GL::BufferHandle::Usage::dynamic_read);
     m_capacity = new_buffer_size;
-}
-
-GL::BufferHandle PlacementPipeline::Buffer::getBuffer() const
-{
-    return m_buffer;
-}
-
-
-// PlacementResult
-
-bool PlacementResult::wait(std::chrono::nanoseconds timeout) const
-{
-    const auto status = m_sync.clientWait(false, timeout);
-
-    return status == GL::Sync::Status::already_signaled || status == GL::Sync::Status::condition_satisfied;
-}
-
-std::size_t PlacementResult::getSize() const
-{
-    return 0;
-}
-
-PlacementResult::PlacementResult(uint num_classes, GL::Buffer &&buffer, GL::Sync &&sync)
-        : m_num_classes(num_classes), m_buffer(std::move(buffer)), m_sync(std::move(sync))
-{
-
 }
 
 } // placement
