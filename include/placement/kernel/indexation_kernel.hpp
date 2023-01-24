@@ -19,18 +19,24 @@ public:
 
     void setCountBufferBindingIndex(uint index) { m_setShaderStorageBlockBinding(m_count_buffer, index); }
 
-    [[nodiscard]]
-    static constexpr GL::GLsizeiptr getCountBufferMemoryRequirement(GL::GLintptr number_of_classes)
-    {
-        return (1 + number_of_classes) * sizeof(uint);
-    }
-
     void setIndexBufferBindingIndex(uint index) { m_setShaderStorageBlockBinding(m_index_buffer, index); }
 
     [[nodiscard]]
-    static constexpr GL::GLsizeiptr getIndexBufferMemoryRequirement(GL::GLintptr number_of_candidates)
+    static constexpr GL::GLsizeiptr getCountBufferMemoryRequirement(uint candidate_count)
     {
-        return number_of_candidates * sizeof(uint);
+        return (1 + candidate_count) * static_cast<GL::GLsizeiptr>(sizeof(uint));
+    }
+
+    [[nodiscard]]
+    static constexpr GL::GLsizeiptr getIndexBufferMemoryRequirement(uint candidate_count)
+    {
+        return candidate_count * static_cast<GL::GLsizeiptr>(sizeof(uint));
+    }
+
+    [[nodiscard]]
+    static constexpr glm::uvec3 calculateNumWorkGroups(uint candidate_count)
+    {
+        return {1 + candidate_count / (2 * work_group_size.x), 1, 1};
     }
 
 private:

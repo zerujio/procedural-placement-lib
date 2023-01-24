@@ -29,6 +29,11 @@ void ComputeKernel::useProgram() const
     gl.UseProgram(m_program.getName());
 }
 
+void ComputeKernel::dispatch(glm::uvec3 num_work_groups)
+{
+    gl.DispatchCompute(num_work_groups.x, num_work_groups.y, num_work_groups.z);
+}
+
 GL::GLuint ComputeKernel::m_getResourceIndex(Interface interface, const char *name) const
 {
     const GLuint value = m_program.getResourceIndex(interface, name);
