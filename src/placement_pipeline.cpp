@@ -4,14 +4,10 @@
 
 #include "glutils/guard.hpp"
 #include "glutils/buffer.hpp"
-#include "glutils/error.hpp"
 
 #include <stdexcept>
 
 namespace placement {
-
-
-// PlacementPipeline
 
 PlacementPipeline::PlacementPipeline()
 {
@@ -38,9 +34,10 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
     m_buffer.getBuffer().bindRange(ssb_binding, m_getCandidateBufferBindingIndex(), m_buffer.getCandidateRange());
     m_buffer.getBuffer().bindRange(ssb_binding, m_getDensityBufferBindingIndex(), m_buffer.getDensityRange());
     m_buffer.getBuffer().bindRange(ssb_binding, m_getWorldUVBufferBindingIndex(), m_buffer.getWorldUVRange());
+    m_buffer.getBuffer().bindRange(ssb_binding, m_getIndexBufferBindingIndex(), m_buffer.getIndexRange());
 
+    // generation
     gl.BindTextureUnit(m_getHeightTexUnit(), world_data.heightmap);
-
     m_generation_kernel.setWorldScale(world_data.scale);
     m_generation_kernel.setFootprint(layer_data.footprint);
     m_generation_kernel.setWorkGroupOffset(work_group_offset);
@@ -49,6 +46,7 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
     ComputeKernel::dispatch(num_work_groups);
     gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
+    // evaluation
     m_evaluation_kernel.useProgram();
     const uint class_count = layer_data.densitymaps.size();
     for (std::size_t i = 0; i < class_count; i++)
@@ -60,84 +58,32 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
         gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     }
 
-    // TODO: call indexation and copy kernel, create output buffer, return result buffer.
-
     constexpr GLsizeiptr candidate_size = 4 * sizeof(std::uint32_t);
 
+    // indexation
     const GL::Buffer::Range count_range {0, IndexationKernel::getCountBufferMemoryRequirement(class_count)};
     const GL::Buffer::Range element_range {count_range.size, candidate_count * candidate_size};
 
     ResultBuffer result_buffer {class_count, count_range.size + element_range.size, GL::Buffer()};
     result_buffer.gl_object.allocateImmutable(result_buffer.size, GL::Buffer::StorageFlags::map_read);
     result_buffer.gl_object.bindRange(ssb_binding, m_getCountBufferBindingIndex(), count_range);
-
-    m_buffer.getBuffer().bindRange(ssb_binding, m_getIndexBufferBindingIndex(), m_buffer.getIndexRange());
+    result_buffer.gl_object.bindRange(ssb_binding, m_getOutputBufferBindingIndex(), element_range);
 
     m_indexation_kernel.useProgram();
     ComputeKernel::dispatch(IndexationKernel::calculateNumWorkGroups(candidate_count));
     gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-    result_buffer.gl_object.bindRange(ssb_binding, m_getOutputBufferBindingIndex(), element_range);
+    // copy
 
     m_copy_kernel.useProgram();
     ComputeKernel::dispatch(CopyKernel::calculateNumWorkGroups(candidate_count));
-
     gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
-    auto fence = GL::createFenceSync();
 
+    // fence
+    auto fence = GL::createFenceSync();
     gl.Flush();
 
     return {std::move(result_buffer), std::move(fence)};
-}
-
-void PlacementPipeline::computePlacement(float footprint, glm::vec2 lower_bound, glm::vec2 upper_bound)
-{
-    using namespace GL;
-
-    // check if empty area
-    if (!glm::all(glm::lessThan(lower_bound, upper_bound)))
-    {
-        m_valid_count = 0;
-        return;
-    }
-
-    gl.BindTextureUnit(m_generation_kernel.getHeightTextureUnit(), m_world_data.height_tex);
-    gl.BindTextureUnit(m_generation_kernel.getDensitytextureUnit(), m_world_data.density_tex);
-
-    const auto candidate_count = m_generation_kernel.setArgs(m_world_data.scale, footprint, lower_bound, upper_bound);
-    m_buffer.resize(candidate_count);
-
-    // generate positions
-    m_buffer.getBuffer().bindRange(GL::BufferHandle::IndexedTarget::shader_storage,
-                                   m_generation_kernel.getCandidateBufferBindingIndex(),
-                                   m_buffer.getCandidateRange());
-
-    m_generation_kernel.dispatchCompute();
-
-    // index valid candidates
-    auto count_range = m_buffer.getIndexRange();
-    count_range.size = static_cast<GLsizeiptr>(sizeof(unsigned int));
-    m_valid_count = 0;
-    m_buffer.getBuffer().write(count_range, &m_valid_count);
-
-    m_buffer.getBuffer().bindRange(GL::BufferHandle::IndexedTarget::shader_storage,
-                                   m_assignment_kernel.getIndexBufferBindingIndex(),
-                                   m_buffer.getIndexRange());
-
-    gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-    m_assignment_kernel.dispatchCompute(candidate_count);
-
-    // copy valid candidates
-    m_buffer.getBuffer().bindRange(GL::BufferHandle::IndexedTarget::shader_storage,
-                                   m_copy_kernel.getPositionBufferBindingIndex(),
-                                   m_buffer.getPositionRange());
-
-    gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-    m_copy_kernel.dispatchCompute(candidate_count);
-
-    // read valid candidate count
-    gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
-    m_buffer.getBuffer().read(count_range, &m_valid_count);
 }
 
 void PlacementPipeline::setBaseTextureUnit(GL::GLuint index)
@@ -174,6 +120,13 @@ void PlacementPipeline::setBaseShaderStorageBindingPoint(GL::GLuint index)
         m_evaluation_kernel.setWorldUVBufferBindingIndex(k);
     }
 
+    // count buffer
+    {
+        const auto m = m_getCountBufferBindingIndex();
+        m_indexation_kernel.setCountBufferBindingIndex(m);
+        m_copy_kernel.setCountBufferBindingIndex(m);
+    }
+
     // Index buffer
     {
         const auto l = m_getIndexBufferBindingIndex();
@@ -181,42 +134,8 @@ void PlacementPipeline::setBaseShaderStorageBindingPoint(GL::GLuint index)
         m_copy_kernel.setIndexBufferBindingIndex(l);
     }
 
-    // count buffer
-    m_indexation_kernel.setCountBufferBindingIndex(m_getCountBufferBindingIndex());
-
     // output buffer
     m_copy_kernel.setOutputBufferBindingIndex(m_getOutputBufferBindingIndex());
-}
-
-std::vector<glm::vec3> PlacementPipeline::copyResultsToCPU() const
-{
-    if (m_valid_count == 0)
-        return {};
-
-    std::vector<glm::vec3> positions;
-    positions.reserve(m_valid_count);
-
-    auto gpu_positions = static_cast<const glm::vec4 *>(m_buffer.getBuffer().mapRange(m_buffer.getPositionRange(),
-                                                                                      GL::BufferHandle::AccessFlags::read));
-    for (GLintptr i = 0; i < m_valid_count; i++)
-        positions.emplace_back(gpu_positions[i]);
-
-    m_buffer.getBuffer().unmap();
-
-    return positions;
-}
-
-void PlacementPipeline::copyResultsToGPUBuffer(GL::GLuint buffer, GL::GLsizeiptr offset) const
-{
-    const auto range = m_getResultRange();
-    gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
-    gl.CopyNamedBufferSubData(m_buffer.getBuffer().getName(), buffer, range.offset, offset, range.size);
-}
-
-GL::BufferHandle::Range PlacementPipeline::m_getResultRange() const
-{
-    return {m_buffer.getPositionRange().offset,
-            static_cast<GLsizeiptr>(m_valid_count * sizeof(glm::vec4))};
 }
 
 void PlacementPipeline::setRandomSeed(uint seed)

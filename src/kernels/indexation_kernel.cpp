@@ -5,8 +5,6 @@ static constexpr auto source_string = R"gl(
 
 layout(local_size_x = 32) in;
 
-uniform uint u_class_index;
-
 struct Candidate
 {
     vec3 position;
@@ -28,8 +26,7 @@ uint readClassIndex(uint index)
 layout(std430) restrict
 buffer CountBuffer
 {
-    uint total;
-    uint by_class[];
+    uint array[];
 } b_count;
 
 layout(std430) restrict writeonly
@@ -42,30 +39,21 @@ buffer IndexBuffer
 void writeIndex(uint array_index, uint value)
 {
     if (array_index < b_index.array.length())
-b_index.array[array_index] = value;
+        b_index.array[array_index] = value;
 }
 
 shared uint s_index_array[2 * gl_WorkGroupSize.x];
 shared uint s_index_offset;
 
-void main()
+void initLocalIndexArray(uvec2 array_index, uvec2 value)
 {
-    const uint local_array_index_0 = gl_LocalInvocationID.x;
-    const uint local_array_index_1 = local_array_index_0 + gl_WorkGroupSize.x;
+    s_index_array[array_index.x] = value.x;
+    s_index_array[array_index.y] = value.y;
+}
 
-    const uint global_array_index_0 = gl_WorkGroupID.x * 2 * gl_WorkGroupSize.x + local_array_index_0;
-    const uint global_array_index_1 = global_array_index_0 + gl_WorkGroupSize.x;
-
-    const uint class_index_0 = readClassIndex(global_array_index_0);
-    const uint class_index_1 = readClassIndex(global_array_index_1);
-
-    s_index_array[local_array_index_0] = class_index_0 == u_class_index;
-    s_index_array[local_array_index_1] = class_index_1 == u_class_index;
-
-    barrier();
-    memoryBarrierShared();
-
-    for (uint group_size = 1; group_size < 2 * gl_workgroupsize.x; group_size <<= 1)
+void addUpLocalIndexArray()
+{
+    for (uint group_size = 1; group_size < 2 * gl_WorkGroupSize.x; group_size <<= 1)
     {
         const uint group_index = (gl_LocalInvocationID.x / group_size) * 2 + 1;
         const uint base_index = group_index * group_size;
@@ -77,22 +65,43 @@ void main()
         barrier();
         memoryBarrierShared();
     }
+}
 
-    if (gl_LocalInvocationID.x == gl_WorkGroupSize.x - 1)
+uint atomicAddToClassCount(uint class_index)
+{
+    const uint local_sum = s_index_array[2 * gl_WorkGroupSize.x - 1];
+    return atomicAdd(b_count.array[class_index], local_sum);
+}
+
+void main()
+{
+    const uvec2 local_index = {gl_LocalInvocationID.x, gl_LocalInvocationID.x + gl_WorkGroupSize.x};
+    const uvec2 global_index = uvec2(gl_WorkGroupID.x * 2 * gl_WorkGroupSize.x) + local_index;
+    const uvec2 class_index = {readClassIndex(global_index.x), readClassIndex(global_index.y)};
+
+    uvec2 result_value = uvec2(-1u);
+
+    for (uint i = 0; i < b_count.array.length(); i++)
     {
-        const uint local_sum = s_index_array[2 * gl_WorkGroupSize.x - 1];
-        atomicAdd(b_count.by_class[class_index], local_sum);
-        s_index_offset = atomicAdd(b_count.total, local_sum);
+        initLocalIndexArray(local_index, equal(class_index, uvec2(i)));
+
+        barrier();
+        memoryBarrierShared();
+
+        addUpLocalIndexArray();
+
+        if (gl_LocalInvocationIndex == 0)
+            s_index_offset = atomicAddToClassCount(i);
+
+        barrier();
+        memoryBarrierShared();
+
+        result_value.x = class_index.x == i ? s_index_array[local_index.x] + s_index_offset - 1 : result_value.x;
+        result_value.y = class_index.y == i ? s_index_array[local_index.y] + s_index_offset - 1 : result_value.y;
     }
 
-    barrier();
-    memoryBarrierShared();
-
-    if (class_index_0 == u_class_index)
-        writeIndex(global_array_index_0, s_index_array[local_array_index_0] + s_index_offset - 1);
-
-    if (class_index_1 == u_class_index)
-        writeIndex(global_array_index_1, s_index_array[local_array_index_1] + s_index_offset - 1);
+    writeIndex(global_index.x, result_value.x);
+    writeIndex(global_index.y, result_value.y);
 }
 )gl";
 

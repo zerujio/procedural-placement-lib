@@ -16,6 +16,9 @@ public:
     void setCandidateBufferBindingIndex(uint index)
     { m_setShaderStorageBlockBinding(m_candidate_buffer, index); }
 
+    void setCountBufferBindingIndex(uint index)
+    { m_setShaderStorageBlockBinding(m_count_buffer, index); }
+
     void setIndexBufferBindingIndex(uint index)
     { m_setShaderStorageBlockBinding(m_index_buffer, index); }
 
@@ -28,6 +31,7 @@ public:
 
 private:
     ShaderStorageBlockIndex m_candidate_buffer{m_getShaderStorageBlockIndex("CandidateBuffer")};
+    ShaderStorageBlockIndex m_count_buffer{m_getShaderStorageBlockIndex("CountBuffer")};
     ShaderStorageBlockIndex m_index_buffer{m_getShaderStorageBlockIndex("IndexBuffer")};
     ShaderStorageBlockIndex m_output_buffer{m_getShaderStorageBlockIndex("OutputBuffer")};
 };

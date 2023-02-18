@@ -41,7 +41,7 @@ int main()
     VertexArrayHandle vertex_array = VertexArrayHandle::create();
     vertex_array.bindVertexBuffer(0, buffer, 0, sizeof(glm::vec4));
     vertex_array.bindAttribute(0 /*attrib index*/, 0 /*buffer index*/);
-    vertex_array.setAttribFormat(0 /*attrib index*/, VertexArrayHandle::AttribSize::three, VertexArrayHandle::AttribType::float_, false, 0);
+    vertex_array.setAttribFormat(0 /*attrib index*/, VertexArrayHandle::AttribSize::_3, VertexArrayHandle::AttribType::_float, false, 0);
     vertex_array.enableAttribute(0);
 
     // rendering

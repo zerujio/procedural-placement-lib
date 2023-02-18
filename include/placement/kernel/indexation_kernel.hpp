@@ -13,8 +13,6 @@ public:
 
     IndexationKernel();
 
-    void setClassIndex(uint index) { m_setUniform(m_class_index, index); }
-
     void setCandidateBufferBindingIndex(uint index) { m_setShaderStorageBlockBinding(m_candidate_buffer, index); }
 
     void setCountBufferBindingIndex(uint index) { m_setShaderStorageBlockBinding(m_count_buffer, index); }
@@ -40,7 +38,6 @@ public:
     }
 
 private:
-    UniformLocation m_class_index {m_getUniformLocation("u_class_index")};
     ShaderStorageBlockIndex m_candidate_buffer {m_getShaderStorageBlockIndex("CandidateBuffer")};
     ShaderStorageBlockIndex m_count_buffer {m_getShaderStorageBlockIndex("CountBuffer")};
     ShaderStorageBlockIndex m_index_buffer {m_getShaderStorageBlockIndex("IndexBuffer")};

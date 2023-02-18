@@ -30,13 +30,10 @@ namespace placement {
  * array. Elements of class 1 are located in the range [count[0], count[0] + count[1]), and so on for each additional
  * class.
  */
-class ResultBuffer final
+struct ResultBuffer
 {
-public:
-    using GLsizeiptr = GL::GLsizeiptr;
-
     unsigned int num_classes;   ///< Number of placement classes in the buffer.
-    GLsizeiptr size;            ///< Total size of the buffer, in bytes.
+    GL::GLsizeiptr size;        ///< Total size of the buffer, in bytes.
     GL::Buffer gl_object;       ///< GL buffer object.
 };
 
@@ -128,7 +125,7 @@ public:
      * @return the number of elements copied. This value can be calculated beforehand with getClassRangeElementCount().
      */
     template<typename Iter>
-    uint copyClassRange(uint begin_class, uint end_class, Iter out_iter) const
+    uint copyClassRangeToHost(uint begin_class, uint end_class, Iter out_iter) const
     {
         constexpr GLsizeiptr element_size = sizeof(Element);
         const uint element_count = getClassRangeElementCount(begin_class, end_class);
@@ -161,8 +158,8 @@ public:
 
     /// Copy all elements to host.
     template<typename Iter>
-    uint copyAll(Iter out_iter) const
-    { return copyClassRange(0, m_buffer.num_classes, out_iter); }
+    uint copyAllToHost(Iter out_iter) const
+    { return copyClassRangeToHost(0, m_buffer.num_classes, out_iter); }
 
     /// Copy all elements of a specific class to another buffer.
     uint copyClass(uint class_index, GL::BufferHandle buffer, GLintptr offset = 0) const
@@ -173,8 +170,14 @@ public:
 
     /// copy all elements of a specific class to host.
     template<typename Iter>
-    uint copyClass(uint class_index, Iter out_iter) const
-    { return copyClassRange(class_index, class_index + 1, out_iter); }
+    uint copyClassToHost(uint class_index, Iter out_iter) const
+    { return copyClassRangeToHost(class_index, class_index + 1, out_iter); }
+
+    /// Direct access to the results.
+    [[nodiscard]] const ResultBuffer& getBuffer() const { return m_buffer; }
+
+    /// cede ownership of the GL buffer, invalidating this structure.
+    [[nodiscard]] ResultBuffer moveBuffer() { return std::move(m_buffer); }
 
 private:
     ResultBuffer m_buffer;

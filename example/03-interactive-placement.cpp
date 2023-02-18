@@ -4,7 +4,6 @@
 
 #include "placement/placement.hpp"
 
-// rendering pipeline
 #include "simple-renderer/renderer.hpp"
 #include "simple-renderer/glsl_definitions.hpp"
 
@@ -24,7 +23,8 @@ class SimpleInstancedMesh : public simple::Drawable
 public:
     SimpleInstancedMesh(const std::vector<glm::vec3>& vertices, const std::vector<unsigned int>& indices = {});
 
-    void updateInstanceData(const placement::PlacementPipeline& placement);
+    ///
+    void updateInstanceData(GL::BufferHandle buffer, GLintptr offset, std::uint32_t instance_count);
 
     void collectDrawCommands(const CommandCollector &collector) const override;
 
@@ -38,9 +38,9 @@ private:
     static constexpr unsigned int s_main_buffer_binding = 0;
     static constexpr unsigned int s_instance_buffer_binding = s_main_buffer_binding + 1;
 
-    GL::Guard<GL::BufferHandle> m_main_buffer;
-    GL::Guard<GL::BufferHandle> m_instance_buffer;
-    GL::Guard<GL::VertexArrayHandle> m_vertex_array;
+    GL::Buffer m_main_buffer;
+    GL::Buffer m_instance_buffer;
+    GL::VertexArray m_vertex_array;
     std::uint32_t m_vertex_count;
     std::uint32_t m_index_count;
     std::uint32_t m_instance_count;
@@ -56,18 +56,17 @@ int main()
 
     GL::enableDebugCallback();
 
-    const GLuint heightmap = loadTexture("assets/heightmap.png");
-
     // compute positions
     placement::PlacementPipeline pipeline;
-    pipeline.setHeightTexture(heightmap);
-    pipeline.setDensityTexture(heightmap);
-    pipeline.setWorldScale({100.0f, 10.0f, 100.0f});
+    placement::WorldData world_data{/* scale= */ {100.0f, 10.0f, 100.0f},
+                                    /* heightmap= */ loadTexture("assets/heightmap.png")};
+    placement::LayerData layer_data{/* footprint= */ std::sqrt(2.0f) * 0.1f,
+                                    /* densitymaps= */{{loadTexture("assets/densitymaps/square_gradient.png")}}};
 
-    float footprint = std::sqrt(2.0f) * 0.1f;
     glm::vec2 lower_bound {0.0f, 0.0f};
     glm::vec2 upper_bound {100.0f, 100.0f};
-    pipeline.computePlacement(footprint, lower_bound, upper_bound);
+
+    auto future_result = pipeline.computePlacement(world_data, layer_data, lower_bound, upper_bound);
 
     // draw
     simple::Renderer renderer;
@@ -223,40 +222,42 @@ SimpleInstancedMesh::SimpleInstancedMesh(const std::vector<glm::vec3> &vertices,
         std::memcpy(init_data, vertices.data(), vertex_data_size);
         std::memcpy(init_data + vertex_data_size, indices.data(), index_data_size);
 
-        m_main_buffer->allocateImmutable(vertex_data_size + index_data_size, GL::BufferHandle::StorageFlags::none,
+        m_main_buffer.allocateImmutable(vertex_data_size + index_data_size, GL::BufferHandle::StorageFlags::none,
                                          init_data);
     }
 
-    m_vertex_array->bindVertexBuffer(s_main_buffer_binding, *m_main_buffer, 0, sizeof(glm::vec3));
+    m_vertex_array.bindVertexBuffer(s_main_buffer_binding, m_main_buffer, 0, sizeof(glm::vec3));
 
     const auto position_location = simple::vertex_position_def.layout.location;
-    m_vertex_array->bindAttribute(position_location, s_main_buffer_binding);
-    m_vertex_array->setAttribFormat(position_location,
-                                    GL::VertexArrayHandle::AttribSize::three,
-                                    GL::VertexArrayHandle::AttribType::float_,
+    m_vertex_array.bindAttribute(position_location, s_main_buffer_binding);
+    m_vertex_array.setAttribFormat(position_location,
+                                    GL::VertexArrayHandle::AttribSize::_3,
+                                    GL::VertexArrayHandle::AttribType::_float,
                                     false, 0);
-    m_vertex_array->enableAttribute(position_location);
+    m_vertex_array.enableAttribute(position_location);
 
     if (!indices.empty())
-        m_vertex_array->bindElementBuffer(*m_main_buffer);
+        m_vertex_array.bindElementBuffer(m_main_buffer);
 
-    m_vertex_array->bindVertexBuffer(s_instance_buffer_binding, *m_instance_buffer, 0, sizeof(glm::vec4));
-    m_vertex_array->setBindingDivisor(s_instance_buffer_binding, 1);
+    m_vertex_array.bindVertexBuffer(s_instance_buffer_binding, m_instance_buffer, 0, sizeof(glm::vec4));
+    m_vertex_array.setBindingDivisor(s_instance_buffer_binding, 1);
 
-    m_vertex_array->bindAttribute(instance_attr_location, s_instance_buffer_binding);
-    m_vertex_array->setAttribFormat(instance_attr_location,
-                                    GL::VertexArrayHandle::AttribSize::three,
-                                    GL::VertexArrayHandle::AttribType::float_,
+    m_vertex_array.bindAttribute(instance_attr_location, s_instance_buffer_binding);
+    m_vertex_array.setAttribFormat(instance_attr_location,
+                                    GL::VertexArrayHandle::AttribSize::_3,
+                                    GL::VertexArrayHandle::AttribType::_float,
                                     false, 0);
-    m_vertex_array->enableAttribute(instance_attr_location);
+    m_vertex_array.enableAttribute(instance_attr_location);
 }
 
-void SimpleInstancedMesh::updateInstanceData(const placement::PlacementPipeline &placement)
+void SimpleInstancedMesh::updateInstanceData(const placement::Result &result)
 {
-    m_instance_count = placement.getResultsSize();
-    m_instance_buffer->allocate(m_instance_count * sizeof(glm::vec4), GL::BufferHandle::Usage::static_draw);
+    constexpr GLsizeiptr instance_alignment = sizeof(glm::vec4);
 
-    placement.copyResultsToGPUBuffer(m_instance_buffer->getName());
+    m_instance_count = result.getElementArrayLength();
+    m_instance_buffer.allocate(m_instance_count * instance_alignment, GL::Buffer::Usage::static_draw);
+
+    result.copyAll(m_instance_buffer);
 }
 
 void SimpleInstancedMesh::collectDrawCommands(const simple::Drawable::CommandCollector &collector) const
@@ -267,8 +268,8 @@ void SimpleInstancedMesh::collectDrawCommands(const simple::Drawable::CommandCol
                                                                simple::IndexType::unsigned_int,
                                                                m_vertex_count * sizeof(glm::vec3),
                                                                m_instance_count),
-                          m_vertex_array.getHandle());
+                          m_vertex_array);
     else
         collector.emplace(simple::DrawArraysInstancedCommand(m_draw_mode, 0, m_vertex_count, m_instance_count),
-                          m_vertex_array.getHandle());
+                          m_vertex_array);
 }
