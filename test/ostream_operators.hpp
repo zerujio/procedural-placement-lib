@@ -1,14 +1,16 @@
 #ifndef PROCEDURALPLACEMENTLIB_OSTREAM_OPERATORS_H
 #define PROCEDURALPLACEMENTLIB_OSTREAM_OPERATORS_H
 
-#include "placement/placement_pipeline_kernel.hpp"
+#include "placement/placement_result.hpp"
 #include "glm/glm.hpp"
 #include <ostream>
 #include <vector>
 #include <set>
 
+namespace glm {
+
 template<auto L, typename T, auto Q>
-std::ostream& operator<< (std::ostream& out, glm::vec<L, T, Q> v)
+std::ostream &operator<<(std::ostream &out, const vec<L, T, Q> &v)
 {
     constexpr auto sep = ", ";
     out << "(" << v.x << sep << v.y;
@@ -19,6 +21,8 @@ std::ostream& operator<< (std::ostream& out, glm::vec<L, T, Q> v)
             out << sep << v.w;
     }
     return out << ")";
+}
+
 }
 
 template<typename T, typename Y>
@@ -52,5 +56,12 @@ std::ostream& operator<< (std::ostream& out, const std::set<T, Compare, Alloc>& 
         out << ", " << *it++;
     return out << "}";
 }
+
+namespace placement {
+std::ostream &operator<<(std::ostream &out, const Result::Element &element)
+{
+    return out << "{ position = " << element.position << ", class_index = " << element.class_index << "}";
+}
+} // placement
 
 #endif //PROCEDURALPLACEMENTLIB_OSTREAM_OPERATORS_H

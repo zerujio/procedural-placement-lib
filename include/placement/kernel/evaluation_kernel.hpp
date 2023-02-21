@@ -1,7 +1,7 @@
 #ifndef PROCEDURALPLACEMENTLIB_EVALUATION_KERNEL_HPP
 #define PROCEDURALPLACEMENTLIB_EVALUATION_KERNEL_HPP
 
-#include "placement/compute_kernel.hpp"
+#include "compute_kernel.hpp"
 
 #include <array>
 
@@ -16,6 +16,9 @@ public:
     EvaluationKernel();
 
     void setClassIndex(uint index) { m_setUniform(m_class_index, index); }
+
+    void setLowerBound(glm::vec2 lower_bound) { m_setUniform(m_lower_bound, lower_bound); }
+    void setUpperBound(glm::vec2 upper_bound) { m_setUniform(m_upper_bound, upper_bound); }
 
     template<typename ArrayLike>
     void setDitheringMatrix(const ArrayLike& values)
@@ -53,7 +56,9 @@ public:
 private:
     UniformLocation m_density_map {m_getUniformLocation("u_density_map")};
     UniformLocation m_class_index {m_getUniformLocation("u_class_index")};
-    UniformLocation m_dithering_matrix {m_getUniformLocation("u_dithering_matrix")};
+    UniformLocation m_dithering_matrix {m_getUniformLocation("u_dithering_matrix[0][0]")};
+    UniformLocation m_lower_bound {m_getUniformLocation("u_lower_bound")};
+    UniformLocation m_upper_bound {m_getUniformLocation("u_upper_bound")};
     ShaderStorageBlockIndex m_candidate_buffer {m_getShaderStorageBlockIndex("CandidateBuffer")};
     ShaderStorageBlockIndex m_world_uv_buffer {m_getShaderStorageBlockIndex("WorldUVBuffer")};
     ShaderStorageBlockIndex m_density_buffer {m_getShaderStorageBlockIndex("DensityBuffer")};

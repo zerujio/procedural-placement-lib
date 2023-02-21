@@ -1,12 +1,12 @@
 add_library(procedural-placement-lib STATIC
         gl_context.cpp
-        generation_kernel.cpp
-        reduction_kernel.cpp
-        placement_pipeline.cpp
         placement_result.cpp
-        compute_kernel.cpp
-        placement_pipeline_kernel.cpp
+        placement_pipeline.cpp
         disk_distribution_generator.cpp
+        #reduction_kernel.cpp
+        #generation_kernel.cpp
+        #placement_pipeline_kernel.cpp
+        kernels/compute_kernel.cpp
         kernels/generation_kernel.cpp
         kernels/evaluation_kernel.cpp
         kernels/indexation_kernel.cpp

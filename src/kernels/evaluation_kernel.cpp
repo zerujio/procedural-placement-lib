@@ -8,6 +8,8 @@ layout(local_size_x = 8, local_size_y = 8) in;
 uniform sampler2D u_density_map;
 uniform uint u_class_index;
 uniform float u_dithering_matrix [gl_WorkGroupSize.x][gl_WorkGroupSize.y];
+uniform vec2 u_lower_bound;
+uniform vec2 u_upper_bound;
 
 struct Candidate {
     vec3 position;
@@ -40,12 +42,15 @@ void main()
 
     const float threshold = u_dithering_matrix[gl_LocalInvocationID.x][gl_LocalInvocationID.y];
     const float density = density_array[array_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y]
-                        + texture(u_density_map, world_uv);
-
-    if (density > threshold)
-        candidate_array[array_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y].class_index = u_class_index;
+                        + texture(u_density_map, world_uv).x;
 
     density_array[array_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = density;
+
+    const vec2 position = candidate_array[array_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y];
+
+    if (density > threshold
+        && glm::all( glm::greaterThanEqual(position, u_lower_bound), glm::lessThan(position, u_upper_bound) )
+        candidate_array[array_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y].class_index = u_class_index;
 }
 )gl";
 

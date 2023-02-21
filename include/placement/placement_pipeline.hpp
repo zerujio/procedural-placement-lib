@@ -22,7 +22,7 @@ namespace placement {
 struct DensityMap
 {
     /// name of an OpenGL texture object.
-    GL::GLuint texture{0};
+    GLuint texture{0};
 
     /// Values in texture will be multiplied by this factor.
     float scale{1};
@@ -52,7 +52,7 @@ struct WorldData
     glm::vec3 scale;
 
     /// Name of an OpenGL texture object to be used as the heightmap of the terrain.
-    GL::GLuint heightmap;
+    GLuint heightmap;
 };
 
 class PlacementPipeline
@@ -131,7 +131,7 @@ public:
      * @param index the index of a texture unit such that indices in the range [index, index + required_texture_units)
      *      are all valid texture unit indices.
      */
-    void setBaseTextureUnit(GL::GLuint index);
+    void setBaseTextureUnit(GLuint index);
 
     /// The number of different shader storage buffer binding points used by the placement compute shaders.
     static constexpr auto required_shader_storage_binding_points = 6u;
@@ -141,7 +141,7 @@ public:
      * @param index An index such that elements in the range [index, index + required_shader_storage_binding_points)
      *      are valid shader storage buffer binding points.
      */
-    void setBaseShaderStorageBindingPoint(GL::GLuint index);
+    void setBaseShaderStorageBindingPoint(GLuint index);
 
     /// Copy results from GPU buffer to CPU memory
     [[deprecated("replaced by PlacementResults::copyToHost()")]]
@@ -160,7 +160,7 @@ public:
      * @param offset a byte offset into @p buffer
      */
     [[deprecated("replaced by PlacementResults::copyData")]]
-    void copyResultsToGPUBuffer(GL::GLuint buffer, GL::GLsizeiptr offset = 0u) const;
+    void copyResultsToGPUBuffer(GLuint buffer, GLsizeiptr offset = 0u) const;
 
 private:
 
@@ -186,19 +186,19 @@ private:
     static constexpr glm::vec2 s_wg_scale_factor {2.5f};
 
     /// number of valid candidates. Total candidates are equal to m_buffer.getSize()
-    [[deprecated]] GL::GLsizeiptr m_valid_count = 0;
+    [[deprecated]] GLsizeiptr m_valid_count = 0;
 
     class Buffer
     {
     public:
-        void resize(GL::GLsizeiptr candidate_count);
+        void resize(GLsizeiptr candidate_count);
 
-        void reserve(GL::GLsizeiptr candidate_count);
+        void reserve(GLsizeiptr candidate_count);
 
-        [[nodiscard]] GL::GLsizeiptr getSize() const
+        [[nodiscard]] GLsizeiptr getSize() const
         { return m_size; }
 
-        [[nodiscard]] GL::GLsizeiptr getCapacity() const
+        [[nodiscard]] GLsizeiptr getCapacity() const
         { return m_capacity; }
 
         [[nodiscard]] GL::BufferHandle getBuffer() const { return m_buffer; }
@@ -213,17 +213,17 @@ private:
 
     private:
         GL::Buffer m_buffer{};
-        GL::GLsizeiptr m_capacity{0};
-        GL::GLsizeiptr m_size{0};
+        GLsizeiptr m_capacity{0};
+        GLsizeiptr m_size{0};
 
         GL::Buffer::Range m_candidate_range;
         GL::Buffer::Range m_density_range;
         GL::Buffer::Range m_world_uv_range;
         GL::Buffer::Range m_index_range;
 
-        static constexpr GL::GLsizeiptr s_min_capacity = 64;
+        static constexpr GLsizeiptr s_min_capacity = 64;
 
-        static GL::GLsizeiptr s_calculateSize(GL::GLsizeiptr capacity);
+        static GLsizeiptr s_calculateSize(GLsizeiptr capacity);
 
         class Allocator;
     } m_buffer;

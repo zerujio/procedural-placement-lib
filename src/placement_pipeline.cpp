@@ -19,10 +19,10 @@ PlacementPipeline::PlacementPipeline()
 FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, const LayerData &layer_data,
                                                  glm::vec2 lower_bound, glm::vec2 upper_bound)
 {
-    constexpr glm::uvec2 wg_size {GenerationKernel::work_group_size};
+    constexpr glm::uvec2 wg_size{GenerationKernel::work_group_size};
     constexpr auto wg_scale = glm::vec2(wg_size) * s_wg_scale_factor;
 
-    const glm::uvec2 work_group_offset {lower_bound / wg_scale};
+    const glm::uvec2 work_group_offset{lower_bound / wg_scale};
     const glm::uvec3 num_work_groups = {1u + glm::uvec2((upper_bound - lower_bound) / wg_scale), 1u};
 
     const uint candidate_count = num_work_groups.x * num_work_groups.y * wg_size.x * wg_size.y;
@@ -61,13 +61,20 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
     constexpr GLsizeiptr candidate_size = 4 * sizeof(std::uint32_t);
 
     // indexation
-    const GL::Buffer::Range count_range {0, IndexationKernel::getCountBufferMemoryRequirement(class_count)};
-    const GL::Buffer::Range element_range {count_range.size, candidate_count * candidate_size};
+    const GL::Buffer::Range count_range{0, IndexationKernel::getCountBufferMemoryRequirement(class_count)};
+    const GL::Buffer::Range element_range{count_range.size, candidate_count * candidate_size};
 
-    ResultBuffer result_buffer {class_count, count_range.size + element_range.size, GL::Buffer()};
-    result_buffer.gl_object.allocateImmutable(result_buffer.size, GL::Buffer::StorageFlags::map_read);
+    ResultBuffer result_buffer{class_count, count_range.size + element_range.size, GL::Buffer()};
+    result_buffer.gl_object.allocateImmutable(result_buffer.size,
+                                              GL::Buffer::StorageFlags::map_read |
+                                              GL::Buffer::StorageFlags::dynamic_storage);
     result_buffer.gl_object.bindRange(ssb_binding, m_getCountBufferBindingIndex(), count_range);
     result_buffer.gl_object.bindRange(ssb_binding, m_getOutputBufferBindingIndex(), element_range);
+
+    {
+        const std::vector<GLuint> count_buffer_initializer{class_count, 0u};
+        result_buffer.gl_object.write(count_range, count_buffer_initializer.data());
+    }
 
     m_indexation_kernel.useProgram();
     ComputeKernel::dispatch(IndexationKernel::calculateNumWorkGroups(candidate_count));
@@ -86,14 +93,14 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
     return {std::move(result_buffer), std::move(fence)};
 }
 
-void PlacementPipeline::setBaseTextureUnit(GL::GLuint index)
+void PlacementPipeline::setBaseTextureUnit(GLuint index)
 {
     m_base_tex_unit = index;
     m_generation_kernel.setHeightmapTextureUnit(m_getHeightTexUnit());
     m_evaluation_kernel.setDensityMapTextureUnit(m_getDensityTexUnit());
 }
 
-void PlacementPipeline::setBaseShaderStorageBindingPoint(GL::GLuint index)
+void PlacementPipeline::setBaseShaderStorageBindingPoint(GLuint index)
 {
     m_base_binding_index = index;
 
@@ -165,7 +172,7 @@ constexpr GLsizeiptr density_size = sizeof(GLfloat);
 constexpr GLsizeiptr world_uv_size = 2 * sizeof(GLfloat);
 constexpr GLsizeiptr index_size = sizeof(unsigned int);
 
-GL::GLsizeiptr PlacementPipeline::Buffer::s_calculateSize(GL::GLsizeiptr capacity)
+GLsizeiptr PlacementPipeline::Buffer::s_calculateSize(GLsizeiptr capacity)
 {
     return (candidate_size + density_size + world_uv_size + index_size) * capacity;
 }
@@ -184,7 +191,7 @@ private:
     GLintptr offset = 0;
 };
 
-void PlacementPipeline::Buffer::resize(GL::GLsizeiptr candidate_count)
+void PlacementPipeline::Buffer::resize(GLsizeiptr candidate_count)
 {
     reserve(candidate_count);
 

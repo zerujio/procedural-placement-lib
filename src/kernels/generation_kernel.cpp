@@ -32,6 +32,7 @@ buffer WorldUVBuffer
 };
 
 layout(std430) restrict writeonly
+buffer DensityBuffer
 {
     float[gl_WorkGroupSize.x][gl_WorkGroupSize.y] density_array[];
 };
@@ -41,13 +42,13 @@ void main()
     const uint array_index = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
 
     const uvec2 grid_index = gl_WorkGroupID.xy + u_work_group_offset;
-    const vec2 h_position = footprint * (u_work_group_pattern[gl_LocalInvocationID.x][gl_LocalInvocationID.y]
+    const vec2 h_position = u_footprint * (u_work_group_pattern[gl_LocalInvocationID.x][gl_LocalInvocationID.y]
                                          + grid_index * u_work_group_scale);
 
-    const vec2 world_uv = h_position / world_scale.xy;
+    const vec2 world_uv = h_position / u_world_scale.xy;
     world_uv_array[array_index][gl_WorkGroupID.x][gl_WorkGroupID.y] = world_uv;
 
-    const float height = texture(u_heightmap, world_uv) * world_scale.z;
+    const float height = texture(u_heightmap, world_uv).x * u_world_scale.z;
     candidate_array[array_index][gl_WorkGroupID.x][gl_WorkGroupID.y] = Candidate(vec3(h_position, height), 0);
 
     density_array[array_index][gl_WorkGroupID.x][gl_WorkGroupID.y] = 0.0f;

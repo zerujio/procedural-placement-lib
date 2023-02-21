@@ -20,7 +20,7 @@ buffer CandidateBuffer
 // read from candidate buffer with bounds checking
 uint readClassIndex(uint index)
 {
-    return index < b_candidate.array.length() ? b_candidate.array[index] : 0;
+    return index < b_candidate.array.length() ? b_candidate.array[index].class_index : 0;
 }
 
 layout(std430) restrict
@@ -83,7 +83,7 @@ void main()
 
     for (uint i = 0; i < b_count.array.length(); i++)
     {
-        initLocalIndexArray(local_index, equal(class_index, uvec2(i)));
+        initLocalIndexArray(local_index, uvec2(equal(class_index, uvec2(i))));
 
         barrier();
         memoryBarrierShared();

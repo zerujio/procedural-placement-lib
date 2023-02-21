@@ -143,7 +143,7 @@ GenerationKernel::GenerationKernel() :
     m_setUniform(position_stencil_scale_def.layout.location, s_work_group_scale);
 }
 
-GL::GLsizeiptr GenerationKernel::setArgs(const glm::vec3 &world_scale, float footprint, glm::vec2 lower_bound,
+GLsizeiptr GenerationKernel::setArgs(const glm::vec3 &world_scale, float footprint, glm::vec2 lower_bound,
                                          glm::vec2 upper_bound)
 {
     // world scale

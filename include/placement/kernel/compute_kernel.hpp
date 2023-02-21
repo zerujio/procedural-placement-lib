@@ -69,7 +69,7 @@ protected:
                                  const char *resource_name);
 
     private:
-        GL::GLuint m_index;
+        GLuint m_index;
     };
 
     /// Queries and stores the index for some program resource.
@@ -119,7 +119,7 @@ protected:
          * @return the current binding index.
          */
         [[nodiscard]]
-        auto getBindingIndex() const -> GL::GLuint
+        auto getBindingIndex() const -> GLuint
         { return m_binding_index; }
 
     protected:
@@ -131,10 +131,10 @@ protected:
             m_queryBindingIndex(kernel, type);
         }
 
-        auto m_queryBindingIndex(const ComputeKernel &kernel, Type type) -> GL::GLuint;
+        auto m_queryBindingIndex(const ComputeKernel &kernel, Type type) -> GLuint;
 
         ProgramResourceIndexBase m_resource_index;
-        GL::GLuint m_binding_index{0};
+        GLuint m_binding_index{0};
     };
 
     /// Lightweight object for manipulating uniform and shader storage interface block binding points.
@@ -153,7 +153,7 @@ protected:
         {}
 
         /// Change the binding point.
-        void setBindingIndex(const ComputeKernel &kernel, GL::GLuint index)
+        void setBindingIndex(const ComputeKernel &kernel, GLuint index)
         {
             if constexpr (InterfaceType == Type::uniform_block)
                 kernel.m_program.setUniformBlockBinding(m_resource_index.get(), index);
@@ -175,7 +175,7 @@ protected:
     UniformLocation m_getUniformLocation(const char* name) const;
 
     template<typename T>
-    void m_setUniform(GL::GLint location, T value) const
+    void m_setUniform(GLint location, T value) const
     {
         m_program.setUniform(location, value);
     }
@@ -187,26 +187,26 @@ protected:
     }
 
     template<typename T>
-    void m_setUniform(GL::GLint location, GL::GLsizei count, const T *values) const
+    void m_setUniform(GLint location, GLsizei count, const T *values) const
     {
         m_program.setUniform(location, count, values);
     }
 
     template<typename T>
-    void m_setUniform(UniformLocation location, GL::GLsizei count, const T *values) const
+    void m_setUniform(UniformLocation location, GLsizei count, const T *values) const
     {
         m_setUniform(location.value, count, values);
     }
 
     template<typename T>
-    void m_setUniformMatrix(GL::GLint location, GL::GLsizei count, GL::GLboolean transpose,
+    void m_setUniformMatrix(GLint location, GLsizei count, GLboolean transpose,
                             const T *values) const
     {
         m_program.setUniformMatrix(location, count, transpose, values);
     }
 
     template<typename T>
-    void m_setUniformMatrix(UniformLocation location, GL::GLsizei count, GL::GLboolean transpose,
+    void m_setUniformMatrix(UniformLocation location, GLsizei count, GLboolean transpose,
                             const T *values) const
     {
         m_setUniformMatrix(location.value, count, transpose, values);
@@ -226,7 +226,7 @@ protected:
         {}
 
         /// Set the texture unit for this sampler
-        void setTextureUnit(const ComputeKernel &kernel, GL::GLuint index);
+        void setTextureUnit(const ComputeKernel &kernel, GLuint index);
 
         /**
          * @brief Get the cached texture unit index.
@@ -235,15 +235,15 @@ protected:
          * @return the current texture unit
          */
         [[nodiscard]]
-        auto getTextureUnit() const -> GL::GLuint
+        auto getTextureUnit() const -> GLuint
         { return m_tex_unit; }
 
         /// Query the GL for the current texture unit index (and update the cached value).
-        auto queryTextureUnit(const ComputeKernel &kernel) -> GL::GLuint;
+        auto queryTextureUnit(const ComputeKernel &kernel) -> GLuint;
 
     private:
         UniformLocation m_location;
-        GL::GLuint m_tex_unit{0};
+        GLuint m_tex_unit{0};
     };
 
 private:

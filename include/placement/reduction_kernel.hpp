@@ -18,20 +18,20 @@ namespace placement {
 
     public:
         [[nodiscard]]
-        GL::GLuint getIndexBufferBindingIndex() const
+        GLuint getIndexBufferBindingIndex() const
         {
             return m_index_buffer_ssb.getBindingIndex();
         }
 
-        void setIndexBufferBindingIndex(GL::GLuint index)
+        void setIndexBufferBindingIndex(GLuint index)
         {
             m_index_buffer_ssb.setBindingIndex(*this, index);
         }
 
         [[nodiscard]]
-        static GL::GLsizeiptr calculateIndexBufferSize(GL::GLsizeiptr element_count)
+        static GLsizeiptr calculateIndexBufferSize(GLsizeiptr element_count)
         {
-            return (element_count + 1) * static_cast<GL::GLsizeiptr>(sizeof(unsigned int));
+            return (element_count + 1) * static_cast<GLsizeiptr>(sizeof(unsigned int));
         }
 
     protected:
@@ -69,20 +69,20 @@ namespace placement {
         void dispatchCompute(std::size_t candidate_count) const;
 
         [[nodiscard]]
-        GL::GLuint getPositionBufferBindingIndex() const
+        GLuint getPositionBufferBindingIndex() const
         {
             return m_position_ssb.getBindingIndex();
         }
 
-        void setPositionBufferBindingIndex(GL::GLuint index)
+        void setPositionBufferBindingIndex(GLuint index)
         {
             m_position_ssb.setBindingIndex(*this, index);
         }
 
         /// position buffer is an array of vec3, but with vec4 alignment
-        static GL::GLsizeiptr calculatePositionBufferSize(GL::GLsizeiptr reduced_count)
+        static GLsizeiptr calculatePositionBufferSize(GLsizeiptr reduced_count)
         {
-            return reduced_count * static_cast<GL::GLsizeiptr>(sizeof(glm::vec4));
+            return reduced_count * static_cast<GLsizeiptr>(sizeof(glm::vec4));
         }
 
     private:

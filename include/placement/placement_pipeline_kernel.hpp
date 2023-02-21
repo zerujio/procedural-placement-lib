@@ -1,7 +1,7 @@
 #ifndef PROCEDURALPLACEMENTLIB_PLACEMENT_PIPELINE_KERNEL_HPP
 #define PROCEDURALPLACEMENTLIB_PLACEMENT_PIPELINE_KERNEL_HPP
 
-#include "compute_kernel.hpp"
+#include "placement/kernel/compute_kernel.hpp"
 
 #include "glutils/buffer.hpp"
 
@@ -21,13 +21,13 @@ namespace placement {
         using ComputeKernel::ComputeKernel;
 
         [[nodiscard]]
-        GL::GLuint getCandidateBufferBindingIndex() const {return m_candidate_ssb.getBindingIndex();}
+        GLuint getCandidateBufferBindingIndex() const {return m_candidate_ssb.getBindingIndex();}
 
-        void setCandidateBufferBindingIndex(GL::GLuint index) {m_candidate_ssb.setBindingIndex(*this, index);}
+        void setCandidateBufferBindingIndex(GLuint index) {m_candidate_ssb.setBindingIndex(*this, index);}
 
-        static GL::GLsizeiptr calculateCandidateBufferSize(GL::GLsizeiptr element_count)
+        static GLsizeiptr calculateCandidateBufferSize(GLsizeiptr element_count)
         {
-            return element_count * static_cast<GL::GLsizeiptr>(sizeof(glm::vec4));
+            return element_count * static_cast<GLsizeiptr>(sizeof(glm::vec4));
         }
 
     protected:

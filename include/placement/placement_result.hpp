@@ -33,7 +33,7 @@ namespace placement {
 struct ResultBuffer
 {
     unsigned int num_classes;   ///< Number of placement classes in the buffer.
-    GL::GLsizeiptr size;        ///< Total size of the buffer, in bytes.
+    GLsizeiptr size;        ///< Total size of the buffer, in bytes.
     GL::Buffer gl_object;       ///< GL buffer object.
 };
 
@@ -43,14 +43,11 @@ struct ResultBuffer
 class Result
 {
 public:
-    using vec3 = glm::vec3;
-    using uint = GL::GLuint;
-    using GLintptr = GL::GLintptr;
-    using GLsizeiptr = GL::GLsizeiptr;
+    using uint = unsigned int;
 
     struct Element
     {
-        vec3 position;
+        glm::vec3 position;
         uint class_index;
     };
 
@@ -69,7 +66,7 @@ public:
     /// Get the byte offset within the result buffer at which the element array starts.
     [[nodiscard]]
     GLintptr getElementArrayBufferOffset() const noexcept
-    { return m_buffer.num_classes * static_cast<GLintptr>(sizeof(uint)); }
+    { return m_buffer.num_classes * static_cast<GLintptr>(sizeof(unsigned int)); }
 
     /**
      * @brief Access the index offsets for each placement class.
@@ -161,6 +158,9 @@ public:
     uint copyAllToHost(Iter out_iter) const
     { return copyClassRangeToHost(0, m_buffer.num_classes, out_iter); }
 
+    /// Copy all elements to a std::vector
+    [[nodiscard]] std::vector<Element> copyAllToHost() const;
+
     /// Copy all elements of a specific class to another buffer.
     uint copyClass(uint class_index, GL::BufferHandle buffer, GLintptr offset = 0) const
     { return copyClassRange(class_index, class_index + 1, buffer, offset); }
@@ -172,6 +172,8 @@ public:
     template<typename Iter>
     uint copyClassToHost(uint class_index, Iter out_iter) const
     { return copyClassRangeToHost(class_index, class_index + 1, out_iter); }
+
+    std::vector<Element> copyClassToHost(uint class_index) const;
 
     /// Direct access to the results.
     [[nodiscard]] const ResultBuffer& getBuffer() const { return m_buffer; }
@@ -195,7 +197,7 @@ public:
     bool isReady() const
     { return wait(std::chrono::nanoseconds::zero()); }
 
-    /// Wait until results are ready, or until the timeout expires.
+    /// Wait until results are ready or until the timeout expires, returning true in the former case and false in the latter.
     [[nodiscard]]
     bool wait(std::chrono::nanoseconds timeout) const;
 

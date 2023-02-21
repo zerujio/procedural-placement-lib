@@ -1,8 +1,8 @@
-#include "placement/compute_kernel.hpp"
+#include "placement/kernel/compute_kernel.hpp"
 
 #include "glutils/shader.hpp"
 #include "glutils/error.hpp"
-#include "gl_context.hpp"
+#include "../gl_context.hpp"
 
 #include "glm/gtc/type_ptr.hpp"
 
@@ -34,12 +34,12 @@ void ComputeKernel::dispatch(glm::uvec3 num_work_groups)
     gl.DispatchCompute(num_work_groups.x, num_work_groups.y, num_work_groups.z);
 }
 
-GL::GLuint ComputeKernel::m_getResourceIndex(Interface interface, const char *name) const
+GLuint ComputeKernel::m_getResourceIndex(Interface interface, const char *name) const
 {
     const GLuint value = m_program.getResourceIndex(interface, name);
 
     if (value == GL_INVALID_INDEX)
-        throw GL::GLError("glGetProgramResourceIndex() return GL_INVALID_INDEX");
+        throw GL::GLError("glGetProgramResourceIndex() returned GL_INVALID_INDEX");
 
     return value;
 }
@@ -48,7 +48,7 @@ ComputeKernel::UniformLocation ComputeKernel::m_getUniformLocation(const char *n
 {
     const UniformLocation value {m_program.getResourceLocation(Interface::uniform, name)};
     if (!value)
-        throw GL::GLError("failed to retrieve uniform location");
+        throw GL::GLError(std::string("failed to retrieve uniform location for ") + name);
     return value;
 }
 
@@ -63,7 +63,7 @@ ComputeKernel::ProgramResourceIndexBase::ProgramResourceIndexBase(const ComputeK
 
 auto ComputeKernel::InterfaceBlockBase::m_queryBindingIndex(const ComputeKernel &kernel,
                                                             ComputeKernel::InterfaceBlockBase::Type type)
--> GL::GLuint
+-> GLuint
 {
     const GLenum prop = GL_BUFFER_BINDING;
     kernel.m_program.getResource(type, m_resource_index.get(), 1, &prop, 1, nullptr,
@@ -71,16 +71,16 @@ auto ComputeKernel::InterfaceBlockBase::m_queryBindingIndex(const ComputeKernel 
     return m_binding_index;
 }
 
-void ComputeKernel::TextureSampler::setTextureUnit(const ComputeKernel &kernel, GL::GLuint texture_unit)
+void ComputeKernel::TextureSampler::setTextureUnit(const ComputeKernel &kernel, GLuint texture_unit)
 {
     kernel.m_setUniform(m_location, static_cast<GLint>(texture_unit));
     m_tex_unit = texture_unit;
 }
 
-auto ComputeKernel::TextureSampler::queryTextureUnit(const placement::ComputeKernel &kernel) -> GL::GLuint
+auto ComputeKernel::TextureSampler::queryTextureUnit(const placement::ComputeKernel &kernel) -> GLuint
 {
     glm::uvec2 values{0};  // querying a sampler returns an uvec2 for some reason
-    gl.GetUniformuiv(kernel.m_program.getName(), m_location.get(), glm::value_ptr(values));
+    gl.GetUniformuiv(kernel.m_program.getName(), m_location.value, glm::value_ptr(values));
     m_tex_unit = values.x;
     return m_tex_unit;
 }

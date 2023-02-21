@@ -1,7 +1,7 @@
 #ifndef PROCEDURALPLACEMENTLIB_INDEXATION_KERNEL_HPP
 #define PROCEDURALPLACEMENTLIB_INDEXATION_KERNEL_HPP
 
-#include "placement/compute_kernel.hpp"
+#include "compute_kernel.hpp"
 
 namespace placement {
 
@@ -20,15 +20,15 @@ public:
     void setIndexBufferBindingIndex(uint index) { m_setShaderStorageBlockBinding(m_index_buffer, index); }
 
     [[nodiscard]]
-    static constexpr GL::GLsizeiptr getCountBufferMemoryRequirement(uint candidate_count)
+    static constexpr GLsizeiptr getCountBufferMemoryRequirement(uint class_count)
     {
-        return (1 + candidate_count) * static_cast<GL::GLsizeiptr>(sizeof(uint));
+        return class_count * static_cast<GLsizeiptr>(sizeof(uint));
     }
 
     [[nodiscard]]
-    static constexpr GL::GLsizeiptr getIndexBufferMemoryRequirement(uint candidate_count)
+    static constexpr GLsizeiptr getIndexBufferMemoryRequirement(uint candidate_count)
     {
-        return candidate_count * static_cast<GL::GLsizeiptr>(sizeof(uint));
+        return candidate_count * static_cast<GLsizeiptr>(sizeof(uint));
     }
 
     [[nodiscard]]

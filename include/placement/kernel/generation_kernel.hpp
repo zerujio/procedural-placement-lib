@@ -1,7 +1,7 @@
 #ifndef PROCEDURALPLACEMENTLIB_GENERATION_KERNEL_HPP
 #define PROCEDURALPLACEMENTLIB_GENERATION_KERNEL_HPP
 
-#include "placement/compute_kernel.hpp"
+#include "compute_kernel.hpp"
 
 #include "glm/vec2.hpp"
 #include "glm/vec3.hpp"
@@ -48,35 +48,35 @@ public:
         m_setUniform(m_work_group_pattern.value + column_index * work_group_size.y, work_group_size.y, column_values);
     }
 
-    void setHeightmapTextureUnit(GL::GLuint texture_unit) { m_setUniform<int>(m_heightmap_tex, texture_unit); }
+    void setHeightmapTextureUnit(GLuint texture_unit) { m_setUniform<int>(m_heightmap_tex, texture_unit); }
 
-    void setCandidateBufferBindingIndex(GL::GLuint index) { m_setShaderStorageBlockBinding(m_candidate_buf, index); }
+    void setCandidateBufferBindingIndex(GLuint index) { m_setShaderStorageBlockBinding(m_candidate_buf, index); }
 
     [[nodiscard]]
-    static constexpr GL::GLsizeiptr getCandidateBufferSizeRequirement(glm::uvec3 num_work_groups)
+    static constexpr GLsizeiptr getCandidateBufferSizeRequirement(glm::uvec3 num_work_groups)
     {
         return s_calculateBufferSize(num_work_groups, sizeof(glm::vec4));
     }
 
-    void setWorldUVBufferBindingIndex(GL::GLuint index) { m_setShaderStorageBlockBinding(m_world_uv_buf, index); }
+    void setWorldUVBufferBindingIndex(GLuint index) { m_setShaderStorageBlockBinding(m_world_uv_buf, index); }
 
     [[nodiscard]]
-    static constexpr GL::GLsizeiptr getWorldUVBufferSizeRequirement(glm::uvec3 num_work_groups)
+    static constexpr GLsizeiptr getWorldUVBufferSizeRequirement(glm::uvec3 num_work_groups)
     {
         return s_calculateBufferSize(num_work_groups, sizeof(glm::vec2));
     }
 
-    void setDensityBufferBindingIndex(GL::GLuint index) { m_setShaderStorageBlockBinding(m_density_buf, index); }
+    void setDensityBufferBindingIndex(GLuint index) { m_setShaderStorageBlockBinding(m_density_buf, index); }
 
     [[nodiscard]]
-    static constexpr GL::GLsizeiptr getDensityBufferMemoryRequirement(glm::uvec3 num_work_groups)
+    static constexpr GLsizeiptr getDensityBufferMemoryRequirement(glm::uvec3 num_work_groups)
     {
         return s_calculateBufferSize(num_work_groups, sizeof(float));
     }
 
 private:
     [[nodiscard]]
-    static constexpr GL::GLsizeiptr s_calculateBufferSize(glm::uvec3 num_work_groups, GL::GLsizeiptr element_size)
+    static constexpr GLsizeiptr s_calculateBufferSize(glm::uvec3 num_work_groups, GLsizeiptr element_size)
     {
         const auto num_invocations = num_work_groups * work_group_size;
         return num_invocations.x * num_invocations.y * element_size;
@@ -86,7 +86,7 @@ private:
     UniformLocation m_world_scale { m_getUniformLocation("u_world_scale") };
     UniformLocation m_work_group_scale { m_getUniformLocation("u_work_group_scale") };
     UniformLocation m_work_group_offset { m_getUniformLocation("u_work_group_offset") };
-    UniformLocation m_work_group_pattern { m_getUniformLocation("u_work_group_pattern") };
+    UniformLocation m_work_group_pattern { m_getUniformLocation("u_work_group_pattern[0][0]") };
     UniformLocation m_heightmap_tex { m_getUniformLocation("u_heightmap") };
     ShaderStorageBlockIndex m_candidate_buf { m_getShaderStorageBlockIndex("CandidateBuffer") };
     ShaderStorageBlockIndex m_world_uv_buf { m_getShaderStorageBlockIndex("WorldUVBuffer") };

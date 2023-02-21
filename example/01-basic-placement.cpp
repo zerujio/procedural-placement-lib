@@ -4,9 +4,11 @@
 #include "GLFW/glfw3.h"
 #include "stb_image.h"
 #include "glm/glm.hpp"
+#include "glutils/debug.hpp"
 
 #include <iostream>
 #include <vector>
+#include <chrono>
 
 static GladGLContext gl;
 
@@ -18,6 +20,8 @@ int main()
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4); // compute shaders require at least version 4.3,
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5); // and DSA requires at least 4.5
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
+
     GLFWwindow* window = glfwCreateWindow(1024, 768, "01-basic-placement", nullptr, nullptr);
     if (!window)
     {
@@ -31,6 +35,8 @@ int main()
         std::cerr << "OpenGL context loading failed" << std::endl;
         return -1;
     }
+
+    gl.Enable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
 
     // load texture
     GLuint texture;
@@ -62,25 +68,35 @@ int main()
             std::cerr << "placement::loadGLContext failed" << std::endl;
             return -1;
         }
+        GL::enableDebugCallback();
 
         // instantiate the placement pipeline. This will load and compile the required compute shaders.
         placement::PlacementPipeline pipeline;
 
         // use same texture for height and density
-        pipeline.setDensityTexture(texture);
-        pipeline.setHeightTexture(texture);
-
-        pipeline.setWorldScale({texture_size.x, 1.0f, texture_size.y});
+        const placement::WorldData world_data {/*scale=*/{texture_size.x, 1.0f, texture_size.y}, /*heightmap=*/texture};
+        const placement::LayerData layer_data {/*footprint=*/5.0f, /*densitymaps=*/{{texture}}};
 
         const glm::vec2 lower_bound{glm::vec2(texture_size.x, texture_size.y) / 2.0f};
         const glm::vec2 upper_bound{lower_bound + 100.0f};
 
-        pipeline.computePlacement(5.0f, lower_bound, upper_bound);
-        const std::vector<glm::vec3> positions = pipeline.copyResultsToCPU();
+        placement::FutureResult future_result = pipeline.computePlacement(world_data, layer_data, lower_bound, upper_bound);
+
+        const auto start_time = std::chrono::steady_clock::now();
+
+        const placement::Result results = future_result.readResult();
+
+        const auto wait_time = std::chrono::steady_clock::now() - start_time;
+        std::cout << "waited for " << wait_time.count() << "ns\n";
+
+        std::vector<placement::Result::Element> result_vector;
+        result_vector.resize(results.getElementArrayLength());
+        results.copyAllToHost(result_vector.begin());
 
         std::cout << std::endl << "placement results:\n";
-        for (const auto &p: positions)
-            std::cout << p.x << ", " << p.y << ", " << p.z << '\n';
+        for (const auto &element: result_vector)
+            std::cout << "position={" << element.position.x << ", " << element.position.y << ", " << element.position.z
+                    << "}, class_index=" << element.class_index << '\n';
     }
 
     glfwTerminate();

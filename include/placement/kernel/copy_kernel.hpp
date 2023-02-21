@@ -1,7 +1,7 @@
 #ifndef PROCEDURALPLACEMENTLIB_COPY_KERNEL_HPP
 #define PROCEDURALPLACEMENTLIB_COPY_KERNEL_HPP
 
-#include "placement/compute_kernel.hpp"
+#include "compute_kernel.hpp"
 
 namespace placement {
 

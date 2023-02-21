@@ -4,7 +4,7 @@
 
 namespace placement {
 
-constexpr GL::GLintptr uint_size = sizeof(GL::GLuint);
+constexpr GLintptr uint_size = sizeof(GLuint);
 
 Result::Result(ResultBuffer &&buffer) : m_buffer(std::move(buffer)), m_index_offset(m_buffer.num_classes + 1, 0u)
 {
@@ -31,6 +31,24 @@ Result::uint Result::copyClassRange(Result::uint begin_class, Result::uint end_c
                      element_count * element_size);
 
     return element_count;
+}
+
+std::vector<Result::Element> Result::copyAllToHost() const
+{
+    std::vector<Element> vector {getElementArrayLength()};
+
+    copyAllToHost(vector.begin());
+
+    return vector;
+}
+
+std::vector<Result::Element> Result::copyClassToHost(Result::uint class_index) const
+{
+    std::vector<Element> vector {getClassElementCount(class_index)};
+
+    copyClassToHost(class_index, vector.begin());
+
+    return vector;
 }
 
 FutureResult::FutureResult(ResultBuffer &&result_buffer, GL::Sync &&sync) : m_buffer(std::move(result_buffer)),

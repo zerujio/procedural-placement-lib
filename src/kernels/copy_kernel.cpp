@@ -31,6 +31,12 @@ buffer OutputBuffer
         Candidate array[];
 } b_output;
 
+layout(std430) restrict readonly
+buffer CountBuffer
+{
+    uint array[];
+} b_count;
+
 void main()
 {
     const uint candidate_index = gl_GlobalInvocationID.x;
@@ -42,7 +48,14 @@ void main()
         return;
 
     const uint copy_index = b_index.array[candidate_index];
-    b_output.array[copy_index] = candidate;
+
+    uint index_offset = 0;
+    for (uint class_index = 0; class_index < candidate.class_index; class_index++)
+        index_offset += b_count.array[class_index];
+
+    barrier();
+
+    b_output.array[copy_index + index_offset] = candidate;
 }
 )gl";
 
