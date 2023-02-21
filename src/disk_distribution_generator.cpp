@@ -8,8 +8,8 @@
 
 namespace placement {
 
-DiskDistributionGrid::DiskDistributionGrid(float radius, glm::uvec2 size) :
-        m_disk_diameter(2 * radius),
+DiskDistributionGrid::DiskDistributionGrid(float diameter, glm::uvec2 size) :
+        m_disk_diameter(diameter),
         m_grid_size(size)
 {
     m_grid.resize(m_grid_size.x * m_grid_size.y, invalid_index);

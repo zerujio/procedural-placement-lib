@@ -903,8 +903,11 @@ TEST_CASE("DiskDistributionGenerator")
                 const glm::ivec2 tile_offset{dx, dy};
                 const glm::vec2 offset = glm::vec2(tile_offset) * bounds;
 
-                CHECK(glm::distance(p, q + offset) >= Approx(footprint));
+                if (glm::distance(p, q + offset) >= footprint)
+                    return true;
             }
+
+        return false;
     };
 
     SECTION("GenerationKernel usage")
@@ -912,13 +915,14 @@ TEST_CASE("DiskDistributionGenerator")
         constexpr auto wg_size = GenerationKernel::work_group_size;
         CAPTURE(wg_size);
 
-        DiskDistributionGenerator generator{.5f, wg_size * 2u};
+        const glm::uvec2 grid_size {glm::vec2(wg_size) * 2.5f};
+        constexpr float footprint = .5f;
+
+        DiskDistributionGenerator generator{footprint, grid_size};
         generator.setSeed(seed);
         generator.setMaxAttempts(100);
 
-        const glm::vec2 bounds {1.f / glm::vec2(wg_size)};
-
-        CAPTURE(bounds);
+        CAPTURE(generator.getGrid().getBounds());
 
         for (std::size_t i = 0; i < 64; i++)
         {
@@ -933,14 +937,14 @@ TEST_CASE("DiskDistributionGenerator")
             CAPTURE(*p, p - positions.begin());
             CHECK(p->x >= 0.0f);
             CHECK(p->y >= 0.0f);
-            CHECK(p->x <= bounds.x);
-            CHECK(p->y <= bounds.y);
+            CHECK(p->x <= generator.getGrid().getBounds().x);
+            CHECK(p->y <= generator.getGrid().getBounds().y);
 
             for (auto q = positions.begin(); q != p; q++)
             {
                 CAPTURE(*q, q - positions.begin());
                 if (p != q)
-                    checkCollision(*p, *q, bounds, 1.0f);
+                    CHECK(checkCollision(*p, *q, generator.getGrid().getBounds(), footprint));
             }
         }
     }

@@ -15,10 +15,10 @@ class DiskDistributionGrid
 public:
     /**
      * @brief Construct a new grid.
-     * @param radius The collision radius of elements. Minimum distance between any two points is 2 * radius.
-     * @param size The number of cells in the grid. Each cell is a square with side equal to 2 * radius / sqrt(2).
+     * @param diameter The collision diameter of elements. Minimum distance between any two points is 2 * diameter.
+     * @param size The number of cells in the grid. Each cell is a square with side equal to 2 * diameter / sqrt(2).
      */
-    DiskDistributionGrid(float radius, glm::uvec2 size);
+    DiskDistributionGrid(float diameter, glm::uvec2 size);
 
     /// attempt to insert a new position into the grid, checking for collisions.
     bool tryInsert(glm::vec2 position);
@@ -58,23 +58,25 @@ class DiskDistributionGenerator
 public:
     /**
      * @brief Create a new generator.
-     * @param radius Collision radius for objects.
-     * @param size of the placement area, in grid cells. Each cell is square with side = 2 * radius / sqrt(2).
+     * @param diameter Collision diameter for objects.
+     * @param size of the placement area, in grid cells. Each cell is square with side = 2 * diameter / sqrt(2).
      */
-    DiskDistributionGenerator(float radius, glm::uvec2 size) :
-        m_grid(radius, size),
+    DiskDistributionGenerator(float diameter, glm::uvec2 size) :
+        m_grid(diameter, size),
         m_dist_x(0.0f, m_grid.getBounds().x),
         m_dist_y(0.0f, m_grid.getBounds().y)
     {}
 
     glm::vec2 generate();
 
-    [[nodiscard]] const std::vector<glm::vec2>& getPositions() const {return m_grid.getPositions();}
+    [[nodiscard]] const std::vector<glm::vec2>& getPositions() const { return m_grid.getPositions(); }
 
-    void setMaxAttempts(std::size_t n) {m_max_attempts = n;}
-    [[nodiscard]] std::size_t getMaxAttempts() const {return m_max_attempts;}
+    void setMaxAttempts(std::size_t n) { m_max_attempts = n; }
+    [[nodiscard]] std::size_t getMaxAttempts() const { return m_max_attempts; }
 
-    void setSeed(uint s) {m_rand.seed(s);}
+    void setSeed(uint s) { m_rand.seed(s); }
+
+    [[nodiscard]] const DiskDistributionGrid& getGrid() const { return m_grid; }
 private:
     DiskDistributionGrid m_grid;
     std::size_t m_max_attempts = 25;
