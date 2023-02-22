@@ -3,7 +3,7 @@
 static constexpr auto source_string = R"gl(
 #version 430 core
 
-#define NULL_CLASS_INDEX 0xffffffff
+#define NULL_CLASS_INDEX 0xFFffFFff
 
 layout(local_size_x = 64) in;
 
@@ -40,7 +40,7 @@ buffer CountBuffer
 void main()
 {
     const uint candidate_index = gl_GlobalInvocationID.x;
-    if (candidate_index < b_candidate.array.length())
+    if (candidate_index >= b_candidate.array.length())
         return;
 
     const Candidate candidate = b_candidate.array[candidate_index];
@@ -52,8 +52,6 @@ void main()
     uint index_offset = 0;
     for (uint class_index = 0; class_index < candidate.class_index; class_index++)
         index_offset += b_count.array[class_index];
-
-    barrier();
 
     b_output.array[copy_index + index_offset] = candidate;
 }

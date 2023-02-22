@@ -802,12 +802,15 @@ TEST_CASE("IndexationKernel", "[indexation][kernel]")
 
 TEST_CASE("CopyKernel", "[copy][kernel]")
 {
-    std::vector<unsigned int> indices {GENERATE(take(6, chunk(10, random(0u, 1u))),
-                                                take(5, chunk(20, random(0u, 1u))),
-                                                take(3, chunk(64, random(0u, 1u))),
-                                                take(3, chunk(333, random(0u, 1u))),
-                                                take(3, chunk(1024, random(0u, 1u))),
-                                                take(3, chunk(15000, random(0u, 1u))))};
+    using IndexVector = std::vector<unsigned int>;
+    std::vector<unsigned int> indices {GENERATE(IndexVector { 0u }, IndexVector {1u},
+                                                IndexVector {0u, 0u}, IndexVector {0u, 1u},
+                                                IndexVector {1u, 0u}, IndexVector {1u, 1u},
+                                                take(3, chunk(10, random(0u, 2u))),
+                                                take(3, chunk(64, random(0u, 3u))),
+                                                take(3, chunk(333, random(0u, 5u))),
+                                                take(3, chunk(1024, random(0u, 7u))),
+                                                take(3, chunk(15000, random(0u, 10u))))};
     constexpr uint invalid_index = -1u;
 
     using Candidate = Result::Element;
@@ -815,47 +818,53 @@ TEST_CASE("CopyKernel", "[copy][kernel]")
     std::vector<Candidate> candidates;
     candidates.reserve(indices.size());
 
-    std::vector<Candidate> valid_elements;
-    valid_elements.reserve(indices.size());
-
     std::vector<unsigned int> copy_indices;
     copy_indices.reserve(indices.size());
 
-    unsigned int valid_count = 0;
+    std::vector<unsigned int> element_counts;
+
     for (auto index: indices)
     {
-        uint class_index = index - 1;
+        if (index > element_counts.size())
+            element_counts.resize(index);
+
+        const uint class_index = index - 1;
+
         Candidate candidate{glm::vec3(candidates.size()), class_index};
         candidates.emplace_back(candidate);
-        if (class_index != invalid_index)
-        {
-            valid_elements.emplace_back(candidate);
-            copy_indices.emplace_back(valid_count);
-            valid_count++;
-        }
-        else
-            copy_indices.emplace_back(invalid_index);
+        copy_indices.emplace_back(class_index != invalid_index ? element_counts[class_index]++ : invalid_index);
     }
 
-    CAPTURE(indices);
+    std::vector<Candidate> expected_results;
+    expected_results.reserve(indices.size());
+
+    for (uint element_class = 0; element_class < element_counts.size(); element_class++)
+    {
+        for (const Candidate& candidate: candidates)
+            if (candidate.class_index == element_class)
+                expected_results.emplace_back(candidate);
+    }
+
+    CAPTURE(candidates, element_counts, expected_results, copy_indices);
 
     using namespace GL;
 
     constexpr GLsizeiptr candidate_size = sizeof(Candidate);
     constexpr GLsizeiptr uint_size = sizeof(uint);
     const GLsizeiptr candidate_count = candidates.size();
+    const GLsizeiptr class_count = element_counts.size();
 
     Buffer buffer;
     const BufferHandle::Range candidate_range{0, candidate_count * candidate_size};
     const BufferHandle::Range output_range{candidate_range.size, candidate_range.size};
-    const BufferHandle::Range index_range{output_range.size + candidate_range.size, candidate_count * uint_size};
-    const BufferHandle::Range count_range{index_range.size + index_range.size, uint_size};
+    const BufferHandle::Range index_range{output_range.offset + output_range.size, candidate_count * uint_size};
+    const BufferHandle::Range count_range{index_range.offset + index_range.size, class_count * uint_size};
 
     buffer.allocateImmutable(candidate_range.size + output_range.size + index_range.size + count_range.size,
                              BufferHandle::StorageFlags::dynamic_storage | Buffer::StorageFlags::map_read);
 
     buffer.write(candidate_range, candidates.data());
-    buffer.write(count_range, &valid_count);
+    buffer.write(count_range, element_counts.data());
     buffer.write(index_range, copy_indices.data());
 
     CopyKernel kernel;
@@ -876,18 +885,21 @@ TEST_CASE("CopyKernel", "[copy][kernel]")
     buffer.bindRange(BufferHandle::IndexedTarget::shader_storage, count_buffer_binding, count_range);
 
     const glm::uvec3 num_work_groups = CopyKernel::calculateNumWorkGroups(candidate_count);
+    CAPTURE(candidate_count);
 
     kernel.useProgram();
     gl.DispatchCompute(num_work_groups.x, num_work_groups.y, num_work_groups.z);
     gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
+    const uint total_count = std::accumulate(element_counts.begin(), element_counts.end(), 0u);
+
     auto output_ptr = static_cast<const Candidate *>(buffer.mapRange(output_range, GL::Buffer::AccessFlags::read));
 
-    std::vector<Candidate> copied_elements{output_ptr, output_ptr + valid_count};
+    std::vector<Candidate> results{output_ptr, output_ptr + total_count};
 
     buffer.unmap();
 
-    CHECK(valid_elements == copied_elements);
+    CHECK(expected_results == results);
 }
 
 TEST_CASE("DiskDistributionGenerator")
