@@ -61,27 +61,4 @@ ComputeKernel::ProgramResourceIndexBase::ProgramResourceIndexBase(const ComputeK
         throw GL::GLError("glGetProgramResourceIndex() returned GL_INVALID_INDEX");
 }
 
-auto ComputeKernel::InterfaceBlockBase::m_queryBindingIndex(const ComputeKernel &kernel,
-                                                            ComputeKernel::InterfaceBlockBase::Type type)
--> GLuint
-{
-    const GLenum prop = GL_BUFFER_BINDING;
-    kernel.m_program.getResource(type, m_resource_index.get(), 1, &prop, 1, nullptr,
-                                 reinterpret_cast<GLint *>(&m_binding_index));
-    return m_binding_index;
-}
-
-void ComputeKernel::TextureSampler::setTextureUnit(const ComputeKernel &kernel, GLuint texture_unit)
-{
-    kernel.m_setUniform(m_location, static_cast<GLint>(texture_unit));
-    m_tex_unit = texture_unit;
-}
-
-auto ComputeKernel::TextureSampler::queryTextureUnit(const placement::ComputeKernel &kernel) -> GLuint
-{
-    glm::uvec2 values{0};  // querying a sampler returns an uvec2 for some reason
-    gl.GetUniformuiv(kernel.m_program.getName(), m_location.value, glm::value_ptr(values));
-    m_tex_unit = values.x;
-    return m_tex_unit;
-}
 } // placement

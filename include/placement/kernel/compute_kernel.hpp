@@ -109,61 +109,6 @@ protected:
         m_program.setShaderStorageBlockBinding(resource_index.value, binding_index);
     }
 
-    class [[deprecated]] InterfaceBlockBase
-    {
-    public:
-        /**
-         * @brief get the current binding index of this interface block.
-         * This value is cached. If the binding is modified by any means other than InterfaceBlock::setBindingIndex()
-         * the value returned by this function will become outdated. To update it, call queryBindingIndex().
-         * @return the current binding index.
-         */
-        [[nodiscard]]
-        auto getBindingIndex() const -> GLuint
-        { return m_binding_index; }
-
-    protected:
-        using Type = GL::ProgramHandle::Interface;
-
-        explicit InterfaceBlockBase(const ComputeKernel &kernel, ProgramResourceIndexBase resource_index, Type type)
-                : m_resource_index(resource_index)
-        {
-            m_queryBindingIndex(kernel, type);
-        }
-
-        auto m_queryBindingIndex(const ComputeKernel &kernel, Type type) -> GLuint;
-
-        ProgramResourceIndexBase m_resource_index;
-        GLuint m_binding_index{0};
-    };
-
-    /// Lightweight object for manipulating uniform and shader storage interface block binding points.
-    template<GL::ProgramHandle::Interface InterfaceType>
-    class [[deprecated]] InterfaceBlock : public InterfaceBlockBase
-    {
-        static_assert(InterfaceType == Type::uniform_block || InterfaceType == Type::shader_storage_block,
-                      "An interface block must be either a uniform block or a shader storage block");
-    public:
-        InterfaceBlock(const ComputeKernel &kernel, ProgramResourceIndex<InterfaceType> resource_index) :
-                InterfaceBlockBase(kernel, resource_index, InterfaceType)
-        {}
-
-        /// Construct from the name of the interface block.
-        InterfaceBlock(const ComputeKernel &kernel, const char *name) : InterfaceBlock(kernel, {kernel, name})
-        {}
-
-        /// Change the binding point.
-        void setBindingIndex(const ComputeKernel &kernel, GLuint index)
-        {
-            if constexpr (InterfaceType == Type::uniform_block)
-                kernel.m_program.setUniformBlockBinding(m_resource_index.get(), index);
-            else if constexpr (InterfaceType == Type::shader_storage_block)
-                kernel.m_program.setShaderStorageBlockBinding(m_resource_index.get(), index);
-
-            m_binding_index = index;
-        }
-    };
-
     struct UniformLocation
     {
         GLint value {-1};
@@ -211,40 +156,6 @@ protected:
     {
         m_setUniformMatrix(location.value, count, transpose, values);
     }
-
-    /// Lightweight object for setting and querying the texture unit of a sampler uniform
-    class [[deprecated]] TextureSampler
-    {
-    public:
-        TextureSampler(const ComputeKernel &kernel, UniformLocation location) : m_location(location)
-        {
-            queryTextureUnit(kernel);
-        }
-
-        TextureSampler(const ComputeKernel &kernel, const char *name)
-                : TextureSampler(kernel, kernel.m_getUniformLocation(name))
-        {}
-
-        /// Set the texture unit for this sampler
-        void setTextureUnit(const ComputeKernel &kernel, GLuint index);
-
-        /**
-         * @brief Get the cached texture unit index.
-         * If the texture unit binding has been changed in any way other than calling setTextureUnit() on this
-         * instance, then the value returned by this function will be outdated. To update it, call queryTextureUnit().
-         * @return the current texture unit
-         */
-        [[nodiscard]]
-        auto getTextureUnit() const -> GLuint
-        { return m_tex_unit; }
-
-        /// Query the GL for the current texture unit index (and update the cached value).
-        auto queryTextureUnit(const ComputeKernel &kernel) -> GLuint;
-
-    private:
-        UniformLocation m_location;
-        GLuint m_tex_unit{0};
-    };
 
 private:
     GL::Program m_program;
