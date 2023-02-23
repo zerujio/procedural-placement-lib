@@ -3,6 +3,8 @@
 static constexpr auto source_string = R"gl(
 #version 450 core
 
+#define INVALID_INDEX 0xFFffFFff
+
 layout(local_size_x = 32) in;
 
 struct Candidate
@@ -20,7 +22,7 @@ buffer CandidateBuffer
 // read from candidate buffer with bounds checking
 uint readClassIndex(uint index)
 {
-    return index < b_candidate.array.length() ? b_candidate.array[index].class_index : 0;
+    return index < b_candidate.array.length() ? b_candidate.array[index].class_index : INVALID_INDEX;
 }
 
 layout(std430) restrict
@@ -79,7 +81,7 @@ void main()
     const uvec2 global_index = uvec2(gl_WorkGroupID.x * 2 * gl_WorkGroupSize.x) + local_index;
     const uvec2 class_index = {readClassIndex(global_index.x), readClassIndex(global_index.y)};
 
-    uvec2 result_value = uvec2(-1u);
+    uvec2 result_value = uvec2(INVALID_INDEX);
 
     for (uint i = 0; i < b_count.array.length(); i++)
     {
@@ -91,7 +93,7 @@ void main()
         addUpLocalIndexArray();
 
         if (gl_LocalInvocationIndex == 0)
-            s_index_offset = atomicAddToClassCount(i);
+        s_index_offset = atomicAddToClassCount(i);
 
         barrier();
         memoryBarrierShared();

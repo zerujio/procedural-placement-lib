@@ -11,6 +11,7 @@
 #include <memory>
 #include <ostream>
 #include <algorithm>
+#include <map>
 
 // included here to make it available to catch.hpp
 #include "ostream_operators.hpp"
@@ -676,45 +677,69 @@ TEST_CASE("EvaluationKernel", "[evaluation][kernel]")
     }
 }
 
+/**
+ * This test dispatches the indexation kernel with a few hand-picked input arrays and multiple randomly generated ones,
+ * checking that the retrieved indices have the expected values.
+ */
 TEST_CASE("IndexationKernel", "[indexation][kernel]")
 {
-    using Indices = std::vector<unsigned int>;
-    auto indices = GENERATE(Indices{0}, Indices{1},
-                            Indices{0, 0}, Indices{0, 1}, Indices{1, 0}, Indices{1, 1},
-                            take(6, chunk(10, random(0u, 1u))),
-                            take(5, chunk(20, random(0u, 1u))),
-                            take(3, chunk(64, random(0u, 1u))),
-                            take(3, chunk(333, random(0u, 1u))),
-                            take(3, chunk(1024, random(0u, 1u))),
-                            take(3, chunk(15000, random(0u, 1u))));
+    using Indices = std::vector<int>;
+    const auto class_indices = GENERATE(
+            Indices{-1}, Indices{0},
+            Indices{-1, -1}, Indices{-1, 0}, Indices{0, -1}, Indices{0, 0},
+            take(3, chunk(10, random(-1, 1))),
+            take(3, chunk(64, random(-1, 3))),
+            take(3, chunk(333, random(-1, 5))),
+            take(3, chunk(1024, random(-1, 7))),
+            take(3, chunk(15000, random(-1, 10))));
 
     using Candidate = Result::Element;
 
     std::vector<Candidate> candidates;
-    candidates.reserve(indices.size());
-    for (auto i: indices)
-        candidates.emplace_back(Candidate{glm::vec3(0.0f), i - 1});
 
-    const unsigned int expected_count = std::count(indices.cbegin(), indices.cend(), 0);
+    constexpr int invalid_index = -1;
 
-    using namespace GL;
+    std::vector<unsigned int> expected_class_counts;
 
+    for (auto &class_index: class_indices)
+    {
+        candidates.emplace_back(Candidate{glm::vec3(0.0f), static_cast<uint>(class_index)});
+
+        if (class_index == invalid_index)
+            continue;
+
+        if (class_index >= expected_class_counts.size())
+            expected_class_counts.resize(class_index + 1);
+
+        expected_class_counts[class_index]++;
+    }
+
+    const uint expected_total_count = std::accumulate(expected_class_counts.begin(), expected_class_counts.end(), 0u);
+
+    CAPTURE(class_indices);
+
+    uint computed_total_count = 0;
+    std::vector<uint> computed_class_counts;
+    computed_class_counts.resize(expected_class_counts.size());
+
+    const GLsizeiptr class_count = expected_class_counts.size();
     const GLsizeiptr candidate_count = candidates.size();
+
+    CAPTURE(class_count, candidate_count);
 
     constexpr GLsizeiptr candidate_size = sizeof(Candidate);
     constexpr GLsizeiptr uint_size = sizeof(GLuint);
 
-    Buffer buffer;
-    const BufferHandle::Range candidate_range{0, candidate_count * candidate_size};
-    const BufferHandle::Range index_range{candidate_range.size, candidate_count * uint_size};
-    const BufferHandle::Range count_range{index_range.offset + index_range.size, uint_size};
-    const GLsizeiptr buffer_size = count_range.offset + count_range.size;
+    GL::Buffer buffer;
+    const GL::BufferHandle::Range candidate_range{0, candidate_count * candidate_size};
+    const GL::BufferHandle::Range index_range{candidate_range.size, candidate_count * uint_size};
+    const GL::BufferHandle::Range count_range{index_range.offset + index_range.size, class_count * uint_size};
 
-    buffer.allocateImmutable(buffer_size, BufferHandle::StorageFlags::dynamic_storage);
+    buffer.allocateImmutable(candidate_range.size + index_range.size + count_range.size,
+                             GL::BufferHandle::StorageFlags::dynamic_storage);
 
-    GLuint actual_count = 0;
-    buffer.write(count_range, &actual_count);      // initialize sum
-    buffer.write(candidate_range, candidates.data());  // initialize candidates
+    buffer.write(count_range, computed_class_counts.data()); // initialize counts
+    buffer.write(candidate_range, candidates.data()); // initialize candidates
 
     constexpr uint candidate_binding_index = 0;
     constexpr uint index_binding_index = 1;
@@ -726,9 +751,9 @@ TEST_CASE("IndexationKernel", "[indexation][kernel]")
     kernel.setIndexBufferBindingIndex(index_binding_index);
     kernel.setCountBufferBindingIndex(count_binding_index);
 
-    buffer.bindRange(BufferHandle::IndexedTarget::shader_storage, candidate_binding_index, candidate_range);
-    buffer.bindRange(BufferHandle::IndexedTarget::shader_storage, index_binding_index, index_range);
-    buffer.bindRange(BufferHandle::IndexedTarget::shader_storage, count_binding_index, count_range);
+    buffer.bindRange(GL::BufferHandle::IndexedTarget::shader_storage, candidate_binding_index, candidate_range);
+    buffer.bindRange(GL::BufferHandle::IndexedTarget::shader_storage, index_binding_index, index_range);
+    buffer.bindRange(GL::BufferHandle::IndexedTarget::shader_storage, count_binding_index, count_range);
 
     const auto wg_count = IndexationKernel::calculateNumWorkGroups(candidate_count);
 
@@ -736,81 +761,87 @@ TEST_CASE("IndexationKernel", "[indexation][kernel]")
     gl.DispatchCompute(wg_count.x, wg_count.y, wg_count.z);
     gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
-    buffer.read(count_range, &actual_count);
+    buffer.read(count_range, computed_class_counts.data());
 
-    CHECK(actual_count == expected_count);
+    CHECK(computed_class_counts == expected_class_counts);
 
-    std::vector<int> computed_indices;
-    computed_indices.resize(indices.size());
+    computed_total_count = std::accumulate(computed_class_counts.begin(), computed_class_counts.end(), 0u);
+    CHECK(computed_total_count == expected_total_count);
+
+    std::vector<int> computed_indices(class_indices.size());
     buffer.read(index_range, computed_indices.data());
 
-    constexpr uint invalid_index = -1u;
+    std::vector<std::vector<uint>> computed_indices_by_class(class_count);
 
-    SECTION("correctness")
+    for (std::size_t i = 0; i < class_indices.size(); i++)
     {
-        CAPTURE(indices);
-        CAPTURE(computed_indices);
+        const uint class_index = candidates[i].class_index;
 
-        const auto expected_invalid = indices.size() - expected_count;
+        if (class_index == invalid_index)
+            continue;
 
-        std::map<int, std::size_t> count;
-
-        for (auto i: computed_indices)
-            count[i]++;
-
-        CHECK(count[invalid_index] == expected_invalid);
-
-        std::vector<std::pair<int, std::size_t>> non_unique;
-        for (const auto &p: count)
-            if (p.first != -1u && p.second > 1)
-                non_unique.emplace_back(p);
-
-        CAPTURE(non_unique);
-        CHECK(non_unique.empty());
+        computed_indices_by_class[class_index].emplace_back(computed_indices[i]);
     }
 
-    SECTION("determinism")
+    CAPTURE(computed_indices);
+
+    std::vector<uint> index_usage_count;
+    std::vector<uint> out_of_range_indices;
+    std::vector<uint> duplicate_indices;
+    std::vector<uint> missing_indices;
+
+    for (uint class_index = 0; class_index < class_count; class_index++)
     {
-        GLuint second_count = 0;
-        buffer.write(count_range, &second_count);
+        CAPTURE(class_index, computed_indices_by_class[class_index]);
 
-        gl.DispatchCompute(wg_count.x, wg_count.y, wg_count.z);
-        gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+        const uint class_element_count = expected_class_counts[class_index];
+        index_usage_count.resize(class_element_count);
 
-        std::set<int> first_computed_set;
-        for (int i: computed_indices)
-            if (i != invalid_index)
-                first_computed_set.insert(i);
+        for (auto copy_index : computed_indices_by_class[class_index])
+        {
+            if (copy_index >= class_element_count)
+                out_of_range_indices.emplace_back(copy_index);
+            else if (index_usage_count[copy_index]++ > 0)
+                duplicate_indices.emplace_back(copy_index);
+        }
 
-        buffer.read(count_range, &second_count);
+        {
+            CAPTURE(out_of_range_indices);
+            CHECK(out_of_range_indices.empty());
+            out_of_range_indices.clear();
+        }
 
-        CAPTURE(indices);
-        CHECK(actual_count == second_count);
+        {
+            CAPTURE(duplicate_indices);
+            CHECK(duplicate_indices.empty());
+            duplicate_indices.clear();
+        }
 
-        std::vector<int> second_computed_indices;
-        second_computed_indices.resize(indices.size());
-        buffer.read(index_range, second_computed_indices.data());
+        {
+            for (uint index = 0; index < index_usage_count.size(); index++)
+                if (index_usage_count[index] == 0)
+                    missing_indices.emplace_back(index);
 
-        std::set<int> second_computed_set;
-        for (int i: second_computed_indices)
-            if (i != -1)
-                second_computed_set.insert(i);
+            CAPTURE(missing_indices);
+            CHECK(missing_indices.empty());
+            missing_indices.clear();
+        }
 
-        CHECK(first_computed_set == second_computed_set);
+        index_usage_count.clear();
     }
 }
 
 TEST_CASE("CopyKernel", "[copy][kernel]")
 {
     using IndexVector = std::vector<unsigned int>;
-    std::vector<unsigned int> indices {GENERATE(IndexVector { 0u }, IndexVector {1u},
-                                                IndexVector {0u, 0u}, IndexVector {0u, 1u},
-                                                IndexVector {1u, 0u}, IndexVector {1u, 1u},
-                                                take(3, chunk(10, random(0u, 2u))),
-                                                take(3, chunk(64, random(0u, 3u))),
-                                                take(3, chunk(333, random(0u, 5u))),
-                                                take(3, chunk(1024, random(0u, 7u))),
-                                                take(3, chunk(15000, random(0u, 10u))))};
+    std::vector<unsigned int> indices{GENERATE(IndexVector{0u}, IndexVector{1u},
+                                               IndexVector{0u, 0u}, IndexVector{0u, 1u},
+                                               IndexVector{1u, 0u}, IndexVector{1u, 1u},
+                                               take(3, chunk(10, random(0u, 2u))),
+                                               take(3, chunk(64, random(0u, 3u))),
+                                               take(3, chunk(333, random(0u, 5u))),
+                                               take(3, chunk(1024, random(0u, 7u))),
+                                               take(3, chunk(15000, random(0u, 10u))))};
     constexpr uint invalid_index = -1u;
 
     using Candidate = Result::Element;
@@ -840,7 +871,7 @@ TEST_CASE("CopyKernel", "[copy][kernel]")
 
     for (uint element_class = 0; element_class < element_counts.size(); element_class++)
     {
-        for (const Candidate& candidate: candidates)
+        for (const Candidate &candidate: candidates)
             if (candidate.class_index == element_class)
                 expected_results.emplace_back(candidate);
     }
@@ -927,7 +958,7 @@ TEST_CASE("DiskDistributionGenerator")
         constexpr auto wg_size = GenerationKernel::work_group_size;
         CAPTURE(wg_size);
 
-        const glm::uvec2 grid_size {glm::vec2(wg_size) * 2.5f};
+        const glm::uvec2 grid_size{glm::vec2(wg_size) * 2.5f};
         constexpr float footprint = .5f;
 
         DiskDistributionGenerator generator{footprint, grid_size};
