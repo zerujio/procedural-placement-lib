@@ -585,15 +585,15 @@ TEST_CASE("GenerationKernel", "[generation][kernel]")
 
 TEST_CASE("EvaluationKernel", "[evaluation][kernel]")
 {
-    const GLsizeiptr wg_count_x = GENERATE(take(3, random(8, 32)));
-    const GLsizeiptr wg_count_y = GENERATE(take(3, random(8, 32)));
+    const GLsizeiptr wg_count_x = GENERATE(take(3, random(1, 4)));
+    const GLsizeiptr wg_count_y = GENERATE(take(3, random(1, 4)));
 
     const glm::vec2 world_boundaries{10.f};
 
-    const float lower_bound_x = GENERATE(take(1, random(0.f, 1.f)));
-    const float lower_bound_y = GENERATE(take(1, random(0.f, 1.f)));
-    const float placement_area_x = GENERATE(take(1, random(0.f, 1.f)));
-    const float placement_area_y = GENERATE(take(1, random(0.f, 1.f)));
+    const float lower_bound_x = GENERATE(take(1, random(0.f, 10.f)));
+    const float lower_bound_y = GENERATE(take(1, random(0.f, 10.f)));
+    const float placement_area_x = GENERATE(take(1, random(0.f, 10.f)));
+    const float placement_area_y = GENERATE(take(1, random(0.f, 10.f)));
 
     const glm::vec2 lower_bound{lower_bound_x, lower_bound_y};
     const glm::vec2 upper_bound = lower_bound + glm::vec2{placement_area_x, placement_area_y};
@@ -612,17 +612,19 @@ TEST_CASE("EvaluationKernel", "[evaluation][kernel]")
     std::vector<glm::vec2> world_uvs;
     std::vector<float> densities;
 
-    for (std::size_t i = 0; i < wg_count_x; i++)
+    constexpr uint invalid_index = 0xFFffFFff;
+
+    for (std::size_t i = 0; i < candidate_count_x; i++)
     {
         const float world_u = static_cast<float>(i) / static_cast<float>(candidate_count_x);
         const float position_x = world_u * world_boundaries.x;
 
-        for (std::size_t j = 0; j < wg_count_y; j++)
+        for (std::size_t j = 0; j < candidate_count_y; j++)
         {
             const float world_v = static_cast<float>(j) / static_cast<float>(candidate_count_y);
             const float position_y = world_v * world_boundaries.y;
 
-            candidates.push_back({glm::vec3(position_x, position_y, 0.f), 0u});
+            candidates.push_back({glm::vec3(position_x, position_y, 0.f), invalid_index});
             world_uvs.emplace_back(world_u, world_v);
             densities.emplace_back(0.0f);
         }
@@ -635,9 +637,10 @@ TEST_CASE("EvaluationKernel", "[evaluation][kernel]")
     const GL::Buffer buffer;
     const GL::Buffer::Range candidate_range{0, candidate_size * candidate_count};
     const GL::Buffer::Range world_uv_range{candidate_range.size, world_uv_size * candidate_count};
-    const GL::Buffer::Range density_range{candidate_range.size + world_uv_range.size, density_size * candidate_size};
+    const GL::Buffer::Range density_range{candidate_range.size + world_uv_range.size, density_size * candidate_count};
 
-    buffer.allocateImmutable(density_range.size + density_range.offset, GL::Buffer::StorageFlags::dynamic_storage);
+    buffer.allocateImmutable(candidate_range.size + world_uv_range.size + density_range.size,
+                             GL::Buffer::StorageFlags::dynamic_storage);
 
     buffer.write(candidate_range, candidates.data());
     buffer.write(world_uv_range, world_uvs.data());
@@ -667,13 +670,41 @@ TEST_CASE("EvaluationKernel", "[evaluation][kernel]")
     evaluated_candidates.resize(candidate_count);
     buffer.read(candidate_range, evaluated_candidates.data());
 
+    std::vector<Result::Element> valid_out_of_bounds;
+    std::vector<Result::Element> invalid_inside_bounds;
+    std::vector<Result::Element> invalid_class_indices;
+
     for (const auto &evaluated_candidate: evaluated_candidates)
     {
-        if (glm::all(glm::greaterThanEqual(glm::vec2(evaluated_candidate.position), lower_bound))
-            && glm::all(glm::lessThan(glm::vec2(evaluated_candidate.position), upper_bound)))
-            CHECK(evaluated_candidate.class_index == 0);
+        const bool inside_bounds = glm::all(glm::greaterThanEqual(glm::vec2(evaluated_candidate.position), lower_bound))
+                                   && glm::all(glm::lessThan(glm::vec2(evaluated_candidate.position), upper_bound));
+
+        if (evaluated_candidate.class_index == invalid_index)
+        {
+            if (inside_bounds)
+                invalid_inside_bounds.emplace_back(evaluated_candidate);
+        }
+        else if (evaluated_candidate.class_index == 0)
+        {
+            if (!inside_bounds)
+                valid_out_of_bounds.emplace_back(evaluated_candidate);
+        }
         else
-            CHECK(evaluated_candidate.class_index == -1u);
+            invalid_class_indices.emplace_back(evaluated_candidate);
+    }
+
+    CAPTURE(candidate_count, evaluated_candidates, lower_bound, upper_bound);
+    {
+        CAPTURE(invalid_inside_bounds);
+        CHECK(invalid_inside_bounds.size() == 0);
+    }
+    {
+        CAPTURE(valid_out_of_bounds);
+        CHECK(valid_out_of_bounds.size() == 0);
+    }
+    {
+        CAPTURE(invalid_class_indices);
+        CHECK(invalid_class_indices.size() == 0);
     }
 }
 

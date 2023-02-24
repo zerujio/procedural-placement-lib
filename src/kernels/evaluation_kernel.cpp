@@ -16,7 +16,7 @@ struct Candidate {
     uint class_index;
 };
 
-layout(std430) restrict writeonly
+layout(std430) restrict
 buffer CandidateBuffer
 {
     Candidate[gl_WorkGroupSize.x][gl_WorkGroupSize.y] candidate_array[];
@@ -46,10 +46,11 @@ void main()
 
     density_array[array_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = density;
 
-    const vec2 position = candidate_array[array_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y];
+    const vec2 position2d = candidate_array[array_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y].position.xy;
+    const bool above_lower_bound = all(greaterThanEqual(position2d, u_lower_bound));
+    const bool below_upper_bound = all(lessThan(position2d, u_upper_bound));
 
-    if (density > threshold
-        && glm::all( glm::greaterThanEqual(position, u_lower_bound), glm::lessThan(position, u_upper_bound) )
+    if (density > threshold && above_lower_bound && below_upper_bound)
         candidate_array[array_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y].class_index = u_class_index;
 }
 )gl";

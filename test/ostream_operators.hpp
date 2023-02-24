@@ -60,7 +60,7 @@ std::ostream& operator<< (std::ostream& out, const std::set<T, Compare, Alloc>& 
 namespace placement {
 std::ostream &operator<<(std::ostream &out, const Result::Element &element)
 {
-    return out << "{ position = " << element.position << ", class_index = " << element.class_index << "}";
+    return out << "{position=" << element.position << ", class_index=" << element.class_index << "}";
 }
 } // placement
 
