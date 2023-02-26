@@ -34,7 +34,7 @@ void ComputeKernel::dispatch(glm::uvec3 num_work_groups)
     gl.DispatchCompute(num_work_groups.x, num_work_groups.y, num_work_groups.z);
 }
 
-GLuint ComputeKernel::m_getResourceIndex(Interface interface, const char *name) const
+GLuint ComputeKernel::getResourceIndex(Interface interface, const char *name) const
 {
     const GLuint value = m_program.getResourceIndex(interface, name);
 
@@ -44,7 +44,7 @@ GLuint ComputeKernel::m_getResourceIndex(Interface interface, const char *name) 
     return value;
 }
 
-ComputeKernel::UniformLocation ComputeKernel::m_getUniformLocation(const char *name) const
+ComputeKernel::UniformLocation ComputeKernel::getUniformLocation(const char *name) const
 {
     const UniformLocation value {m_program.getResourceLocation(Interface::uniform, name)};
     if (!value)
@@ -52,13 +52,13 @@ ComputeKernel::UniformLocation ComputeKernel::m_getUniformLocation(const char *n
     return value;
 }
 
-ComputeKernel::ProgramResourceIndexBase::ProgramResourceIndexBase(const ComputeKernel &kernel,
-                                                                  GL::ProgramHandle::Interface program_interface,
-                                                                  const char *resource_name) :
-        m_index(kernel.m_program.getResourceIndex(program_interface, resource_name))
+GLuint
+ComputeKernel::m_queryInterFaceBlockBindingIndex(InterfaceBlockType block_type, GLuint resource_index) const
 {
-    if (m_index == GL_INVALID_INDEX)
-        throw GL::GLError("glGetProgramResourceIndex() returned GL_INVALID_INDEX");
+    GLint index;
+    GLenum prop {GL_BUFFER_BINDING};
+    m_program.getResource(static_cast<Interface>(block_type), resource_index, 1, &prop, 1, nullptr, &index);
+    return index;
 }
 
 } // placement
