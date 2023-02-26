@@ -390,14 +390,11 @@ TEST_CASE("PlacementPipeline (multiclass)", "[pipeline][multiclass]")
 
     PlacementPipeline pipeline;
     WorldData world_data{{1.f, 1.f, 1.f}, s_texture_loader["assets/heightmap.png"]};
-    LayerData layer_data{footprint, {{s_texture_loader["assets/densitymaps/linear_gradient.png"], .2},
-                                     {s_texture_loader["assets/densitymaps/bilinear_gradient.png"], .2},
-                                     {s_texture_loader["assets/densitymaps/radial_gradient.png"], .2},
-                                     {s_texture_loader["assets/densitymaps/square_gradient.png"], .2},
-                                     {s_texture_loader["assets/densitymaps/cone_gradient.png"], .2}}};
+    const GLuint white_texture = s_texture_loader["assets/white.png"];
+    LayerData layer_data{footprint,
+                         {{white_texture, .4f}, {white_texture, .3f}, {white_texture, .2f}, {white_texture, .1f}}};
 
-    constexpr std::size_t num_classes = 5;
-    REQUIRE(layer_data.densitymaps.size() == num_classes);
+    const std::size_t num_classes = layer_data.densitymaps.size();
 
     const glm::vec2 lower_bound{0};
     const glm::vec2 upper_bound{1};
@@ -409,7 +406,6 @@ TEST_CASE("PlacementPipeline (multiclass)", "[pipeline][multiclass]")
         SECTION("Host")
         {
             const auto all_results = results.copyAllToHost();
-            REQUIRE(all_results.size() == num_classes);
             CHECK(results.getElementArrayLength() == all_results.size());
 
             auto begin_iter = all_results.begin();
@@ -446,18 +442,43 @@ TEST_CASE("PlacementPipeline (multiclass)", "[pipeline][multiclass]")
         }
     }
 
-    SECTION("Boundaries and separation")
+    using Element = Result::Element;
+
+    SECTION("Boundaries and footprint")
     {
         const auto elements = results.copyAllToHost();
-        std::vector<glm::vec3> parsed;
-        parsed.reserve(results.getElementArrayLength());
+        CAPTURE(elements.size());
 
-        for (auto &element: elements)
+        std::vector<Element> out_of_bounds;
+        std::vector<std::pair<Element, Element>> collisions;
+
+        for (std::size_t i = 0; i < elements.size(); i++)
         {
-            const auto position = element.position;
-            for (const auto &other_position: parsed)
-                REQUIRE(glm::distance(position, other_position) >= Approx(footprint));
-            parsed.emplace_back(position);
+            const glm::vec2 position2d = elements[i].position;
+
+            if (glm::all(glm::greaterThanEqual(position2d, lower_bound))
+                    && glm::all(glm::lessThan(position2d, upper_bound)))
+                out_of_bounds.emplace_back(elements[i]);
+
+            for (std::size_t j = 0; j < i; j++)
+            {
+                const glm::vec2 other_position2d = elements[j].position;
+
+                if (glm::distance(position2d, other_position2d) < footprint)
+                    collisions.emplace_back(elements[i], elements[j]);
+            }
+        }
+
+        {
+            INFO("Boundary check:");
+            CAPTURE(out_of_bounds.size(), out_of_bounds);
+            CHECK(out_of_bounds.empty());
+        }
+
+        {
+            INFO("Footprint check:");
+            CAPTURE(collisions.size(), collisions);
+            CHECK(collisions.empty());
         }
     }
 

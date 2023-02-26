@@ -5,7 +5,7 @@
 
 namespace placement {
 
-class CopyKernel final : public ComputeKernel
+class CopyKernel final : public ComputeShaderProgram
 {
 public:
     static constexpr glm::uvec3 work_group_size{64, 1, 1};
@@ -14,26 +14,26 @@ public:
     CopyKernel();
 
     void setCandidateBufferBindingIndex(uint index)
-    { m_setShaderStorageBlockBinding(m_candidate_buffer, index); }
+    { setShaderStorageBlockBindingIndex(m_candidate_buffer, index); }
 
     void setCountBufferBindingIndex(uint index)
-    { m_setShaderStorageBlockBinding(m_count_buffer, index); }
+    { setShaderStorageBlockBindingIndex(m_count_buffer, index); }
 
     void setIndexBufferBindingIndex(uint index)
-    { m_setShaderStorageBlockBinding(m_index_buffer, index); }
+    { setShaderStorageBlockBindingIndex(m_index_buffer, index); }
 
     void setOutputBufferBindingIndex(uint index)
-    { m_setShaderStorageBlockBinding(m_output_buffer, index); }
+    { setShaderStorageBlockBindingIndex(m_output_buffer, index); }
 
     [[nodiscard]]
     static constexpr glm::uvec3 calculateNumWorkGroups(uint candidate_count)
     { return {1u + candidate_count / work_group_size.x, 1, 1}; }
 
 private:
-    ShaderStorageBlockIndex m_candidate_buffer{m_getShaderStorageBlockIndex("CandidateBuffer")};
-    ShaderStorageBlockIndex m_count_buffer{m_getShaderStorageBlockIndex("CountBuffer")};
-    ShaderStorageBlockIndex m_index_buffer{m_getShaderStorageBlockIndex("IndexBuffer")};
-    ShaderStorageBlockIndex m_output_buffer{m_getShaderStorageBlockIndex("OutputBuffer")};
+    ShaderStorageBlockIndex m_candidate_buffer{getShaderStorageBlockIndex("CandidateBuffer")};
+    ShaderStorageBlockIndex m_count_buffer{getShaderStorageBlockIndex("CountBuffer")};
+    ShaderStorageBlockIndex m_index_buffer{getShaderStorageBlockIndex("IndexBuffer")};
+    ShaderStorageBlockIndex m_output_buffer{getShaderStorageBlockIndex("OutputBuffer")};
 };
 
 } // placement

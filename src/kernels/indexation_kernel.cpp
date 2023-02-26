@@ -108,5 +108,5 @@ void main()
 )gl";
 
 namespace placement {
-IndexationKernel::IndexationKernel() : ComputeKernel(source_string) {}
+IndexationKernel::IndexationKernel() : ComputeShaderProgram(source_string) {}
 } // placement

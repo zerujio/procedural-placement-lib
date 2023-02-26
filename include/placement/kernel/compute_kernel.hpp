@@ -12,7 +12,7 @@
 
 namespace placement {
 
-class ComputeKernel
+class ComputeShaderProgram
 {
 public:
     /// Equivalent to calling glUseProgram with this kernel's program name.
@@ -21,22 +21,22 @@ public:
     static void dispatch(glm::uvec3 num_work_groups);
 
     /// Compile and link a compute shader from source code.
-    explicit ComputeKernel(const char *source_string) : ComputeKernel(1, &source_string)
+    explicit ComputeShaderProgram(const char *source_string) : ComputeShaderProgram(1, &source_string)
     {}
 
-    explicit ComputeKernel(const std::string &source_string) : ComputeKernel(source_string.c_str())
+    explicit ComputeShaderProgram(const std::string &source_string) : ComputeShaderProgram(source_string.c_str())
     {}
 
-    explicit ComputeKernel(const std::vector<const char *> &strings)
-            : ComputeKernel(strings.size(), const_cast<const char **>(strings.data()))
+    explicit ComputeShaderProgram(const std::vector<const char *> &strings)
+            : ComputeShaderProgram(strings.size(), const_cast<const char **>(strings.data()))
     {}
 
     template<auto N>
-    explicit ComputeKernel(const std::array<const char *, N> &strings)
-            : ComputeKernel(strings.size, const_cast<const char **>(strings.data()))
+    explicit ComputeShaderProgram(const std::array<const char *, N> &strings)
+            : ComputeShaderProgram(strings.size, const_cast<const char **>(strings.data()))
     {}
 
-    ComputeKernel(unsigned int count, const char **source_strings);
+    ComputeShaderProgram(unsigned int count, const char **source_strings);
 
     // Various utility classes
 
@@ -69,7 +69,7 @@ public:
     template<InterfaceBlockType BlockType>
     class InterfaceBlock
     {
-        friend class ComputeKernel;
+        friend class ComputeShaderProgram;
 
     public:
         using ResourceIndexType = ResourceIndex<static_cast<Interface>(BlockType)>;
@@ -124,7 +124,7 @@ public:
     using ShaderStorageBlockIndex = ResourceIndex<Interface::shader_storage_block>;
 
     [[nodiscard]]
-    ShaderStorageBlockIndex getShaderStorageBlockResourceIndex(const char *name) const
+    ShaderStorageBlockIndex getShaderStorageBlockIndex(const char *name) const
     {
         return getResourceIndex<Interface::shader_storage_block>(name);
     }
@@ -158,6 +158,9 @@ public:
     /// Wraps a uniform location.
     struct UniformLocation
     {
+        explicit UniformLocation(GLuint v) : value(v) {}
+        explicit UniformLocation(GLint v) : value(v) {}
+
         [[nodiscard]] operator bool() const
         { return value > -1; }
 
@@ -213,7 +216,7 @@ public:
     template<typename T>
     class TypedUniform
     {
-        friend class ComputeKernel;
+        friend class ComputeShaderProgram;
 
     public:
         explicit TypedUniform(UniformLocation location) : m_location(location)
@@ -226,7 +229,7 @@ public:
     template<typename T, uint N>
     struct TypedUniform<T[N]>
     {
-        friend class ComputeKernel;
+        friend class ComputeShaderProgram;
 
     public:
         explicit TypedUniform(UniformLocation location) : m_location(location)
@@ -234,7 +237,7 @@ public:
 
         constexpr auto operator[](uint index)
         {
-            return TypedUniform<T>(m_location + getRequiredLocations<T>() * index);
+            return TypedUniform<T>(UniformLocation(m_location.value + getRequiredLocations<T>() * index));
         }
 
     private:
@@ -273,7 +276,7 @@ public:
     template<typename T>
     class CachedUniform
     {
-        friend class ComputeKernel;
+        friend class ComputeShaderProgram;
 
         static_assert(!std::is_array_v<T>, "cached uniform arrays are not currently supported");
 
@@ -342,11 +345,11 @@ struct TypeOfPointerToMember<MemberType ObjectType::*>
     using Object = ObjectType;
 };
 
-template<ComputeKernel::InterfaceBlockType I>
-class ComputeKernel::InterfaceBlockAccessor
+template<ComputeShaderProgram::InterfaceBlockType I>
+class ComputeShaderProgram::InterfaceBlockAccessor
 {
 public:
-    explicit InterfaceBlockAccessor(ComputeKernel &kernel) : m_kernel(&kernel)
+    explicit InterfaceBlockAccessor(ComputeShaderProgram &kernel) : m_kernel(&kernel)
     {}
 
     [[nodiscard]] GLuint get() const
@@ -366,11 +369,11 @@ public:
 
 private:
     InterfaceBlock<I> *m_block;
-    ComputeKernel *m_kernel;
+    ComputeShaderProgram *m_kernel;
 };
 
 template<auto PointerToMember>
-class ComputeKernel::UniformAccessor
+class ComputeShaderProgram::UniformAccessor
 {
 public:
     using PointerToMemberType = decltype(PointerToMember);

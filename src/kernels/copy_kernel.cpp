@@ -58,5 +58,5 @@ void main()
 )gl";
 
 namespace placement {
-CopyKernel::CopyKernel() : ComputeKernel(source_string) {}
+CopyKernel::CopyKernel() : ComputeShaderProgram(source_string) {}
 } // placement

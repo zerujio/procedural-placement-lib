@@ -43,10 +43,12 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
     m_generation_kernel.setWorkGroupOffset(work_group_offset);
 
     m_generation_kernel.useProgram();
-    ComputeKernel::dispatch(num_work_groups);
+    ComputeShaderProgram::dispatch(num_work_groups);
     gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     // evaluation
+    m_evaluation_kernel.setLowerBound(lower_bound);
+    m_evaluation_kernel.setUpperBound(upper_bound);
     m_evaluation_kernel.useProgram();
     const uint class_count = layer_data.densitymaps.size();
     for (std::size_t i = 0; i < class_count; i++)
@@ -54,36 +56,34 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
         gl.BindTextureUnit(m_getDensityTexUnit(), layer_data.densitymaps[i].texture);
         m_evaluation_kernel.setClassIndex(i);
 
-        ComputeKernel::dispatch(num_work_groups);
+        ComputeShaderProgram::dispatch(num_work_groups);
         gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     }
 
-    constexpr GLsizeiptr candidate_size = 4 * sizeof(std::uint32_t);
+    constexpr GLsizeiptr candidate_size = sizeof(Result::Element);
 
     // indexation
     const GL::Buffer::Range count_range{0, IndexationKernel::getCountBufferMemoryRequirement(class_count)};
     const GL::Buffer::Range element_range{count_range.size, candidate_count * candidate_size};
 
     ResultBuffer result_buffer{class_count, count_range.size + element_range.size, GL::Buffer()};
-    result_buffer.gl_object.allocateImmutable(result_buffer.size,
-                                              GL::Buffer::StorageFlags::map_read |
-                                              GL::Buffer::StorageFlags::dynamic_storage);
+    result_buffer.gl_object.allocateImmutable(result_buffer.size, GL::Buffer::StorageFlags::map_read |
+                                                                  GL::Buffer::StorageFlags::dynamic_storage);
     result_buffer.gl_object.bindRange(ssb_binding, m_getCountBufferBindingIndex(), count_range);
     result_buffer.gl_object.bindRange(ssb_binding, m_getOutputBufferBindingIndex(), element_range);
 
     {
-        const std::vector<GLuint> count_buffer_initializer{class_count, 0u};
+        const std::vector<GLuint> count_buffer_initializer(class_count);
         result_buffer.gl_object.write(count_range, count_buffer_initializer.data());
     }
 
     m_indexation_kernel.useProgram();
-    ComputeKernel::dispatch(IndexationKernel::calculateNumWorkGroups(candidate_count));
+    ComputeShaderProgram::dispatch(IndexationKernel::calculateNumWorkGroups(candidate_count));
     gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     // copy
-
     m_copy_kernel.useProgram();
-    ComputeKernel::dispatch(CopyKernel::calculateNumWorkGroups(candidate_count));
+    ComputeShaderProgram::dispatch(CopyKernel::calculateNumWorkGroups(candidate_count));
     gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
     // fence

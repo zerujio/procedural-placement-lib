@@ -7,7 +7,7 @@
 #include "glm/gtc/type_ptr.hpp"
 
 namespace placement {
-ComputeKernel::ComputeKernel(unsigned int count, const char **source_strings)
+ComputeShaderProgram::ComputeShaderProgram(unsigned int count, const char **source_strings)
 {
     using namespace GL;
 
@@ -24,17 +24,17 @@ ComputeKernel::ComputeKernel(unsigned int count, const char **source_strings)
     m_program.detachShader(shader);
 }
 
-void ComputeKernel::useProgram() const
+void ComputeShaderProgram::useProgram() const
 {
     gl.UseProgram(m_program.getName());
 }
 
-void ComputeKernel::dispatch(glm::uvec3 num_work_groups)
+void ComputeShaderProgram::dispatch(glm::uvec3 num_work_groups)
 {
     gl.DispatchCompute(num_work_groups.x, num_work_groups.y, num_work_groups.z);
 }
 
-GLuint ComputeKernel::getResourceIndex(Interface interface, const char *name) const
+GLuint ComputeShaderProgram::getResourceIndex(Interface interface, const char *name) const
 {
     const GLuint value = m_program.getResourceIndex(interface, name);
 
@@ -44,7 +44,7 @@ GLuint ComputeKernel::getResourceIndex(Interface interface, const char *name) co
     return value;
 }
 
-ComputeKernel::UniformLocation ComputeKernel::getUniformLocation(const char *name) const
+ComputeShaderProgram::UniformLocation ComputeShaderProgram::getUniformLocation(const char *name) const
 {
     const UniformLocation value {m_program.getResourceLocation(Interface::uniform, name)};
     if (!value)
@@ -53,7 +53,7 @@ ComputeKernel::UniformLocation ComputeKernel::getUniformLocation(const char *nam
 }
 
 GLuint
-ComputeKernel::m_queryInterFaceBlockBindingIndex(InterfaceBlockType block_type, GLuint resource_index) const
+ComputeShaderProgram::m_queryInterFaceBlockBindingIndex(InterfaceBlockType block_type, GLuint resource_index) const
 {
     GLint index;
     GLenum prop {GL_BUFFER_BINDING};

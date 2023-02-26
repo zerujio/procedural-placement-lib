@@ -57,7 +57,7 @@ void main()
 
 namespace placement {
 
-EvaluationKernel::EvaluationKernel() : ComputeKernel(source_string)
+EvaluationKernel::EvaluationKernel() : ComputeShaderProgram(source_string)
 {
     setDitheringMatrixColumns(default_dithering_matrix);
 }

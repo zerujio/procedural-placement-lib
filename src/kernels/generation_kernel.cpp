@@ -57,5 +57,17 @@ void main()
 
 namespace placement {
 
-GenerationKernel::GenerationKernel() : ComputeKernel(source_string) {}
+GenerationKernel::GenerationKernel()
+    :   m_program(source_string),
+        m_footprint(m_program.getUniformLocation("u_footprint")),
+        m_world_scale(m_program.getUniformLocation("u_world_scale")),
+        m_work_group_scale(m_program.getUniformLocation("u_work_group_scale")),
+        m_work_group_offset(m_program.getUniformLocation("u_work_group_offset")),
+        m_work_group_pattern(m_program.getUniformLocation("u_work_group_pattern[0][0]")),
+        m_heightmap_tex(m_program.getUniformLocation("u_heightmap")),
+        m_candidate_buf(m_program.getShaderStorageBlockIndex("CandidateBuffer")),
+        m_world_uv_buf(m_program.getShaderStorageBlockIndex("WorldUVBuffer")),
+        m_density_buf(m_program.getShaderStorageBlockIndex("DensityBuffer"))
+{}
+
 } // placement
