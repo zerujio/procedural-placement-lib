@@ -18,8 +18,8 @@ public:
     GenerationKernel();
 
     /// Dispatch the compute kernel with the specified arguments.
-    void operator()(glm::uvec2 num_work_groups, float footprint, glm::vec3 world_scale, glm::vec2 group_scale,
-                    glm::uvec2 group_offset, GLuint heightmap_texture_unit, GLuint candidate_buffer_binding_index,
+    void operator()(glm::uvec2 num_work_groups, glm::uvec2 group_offset, float footprint, glm::vec3 world_scale,
+                    GLuint heightmap_texture_unit, GLuint candidate_buffer_binding_index,
                     GLuint density_buffer_binding_index, GLuint world_uv_buffer_binding_index);
 
     template<typename ArrayLike>
@@ -80,24 +80,19 @@ private:
         return num_invocations.x * num_invocations.y * element_size;
     }
 
-    template<typename T>
-    using TypedUniform = ComputeShaderProgram::TypedUniform<T>;
-
-    template<typename T>
-    using CachedUniform = ComputeShaderProgram::CachedUniform<T>;
-
-    using ShaderStorageBlock = ComputeShaderProgram::ShaderStorageBlock;
-
     ComputeShaderProgram m_program;
-    TypedUniform<glm::vec2> m_footprint;
-    TypedUniform<glm::vec3> m_world_scale;
-    CachedUniform<glm::vec2> m_work_group_scale;
-    TypedUniform<glm::uvec2> m_work_group_offset;
-    TypedUniform<glm::vec2[work_group_size.x][work_group_size.y]> m_work_group_pattern;
-    CachedUniform<int> m_heightmap_tex;
-    ShaderStorageBlock m_candidate_buf;
-    ShaderStorageBlock m_world_uv_buf;
-    ShaderStorageBlock m_density_buf;
+
+    using CS = ComputeShaderProgram;
+
+    CS::TypedUniform<float> m_footprint;
+    CS::TypedUniform<glm::vec3> m_world_scale;
+    CS::TypedUniform<glm::vec2[work_group_size.x][work_group_size.y]> m_work_group_pattern;
+    CS::TypedUniform<glm::uvec2> m_work_group_offset;
+    CS::CachedUniform<glm::vec2> m_work_group_scale;
+    CS::CachedUniform<int> m_heightmap_tex;
+    CS::ShaderStorageBlock m_candidate_buf;
+    CS::ShaderStorageBlock m_world_uv_buf;
+    CS::ShaderStorageBlock m_density_buf;
 };
 
 } // placement

@@ -108,5 +108,21 @@ void main()
 )gl";
 
 namespace placement {
-IndexationKernel::IndexationKernel() : ComputeShaderProgram(source_string) {}
+IndexationKernel::IndexationKernel()
+        : m_program(source_string),
+          m_candidate_buffer(m_program.getShaderStorageBlockIndex("CandidateBuffer")),
+          m_count_buffer(m_program.getShaderStorageBlockIndex("CountBuffer")),
+          m_index_buffer(m_program.getShaderStorageBlockIndex("IndexBuffer"))
+{}
+
+void
+IndexationKernel::operator()(uint num_work_groups, uint candidate_buffer_binding_index, uint count_buffer_binding_index,
+                             uint index_buffer_binding_index)
+{
+    m_program.setShaderStorageBlockBindingIndex(m_candidate_buffer, candidate_buffer_binding_index);
+    m_program.setShaderStorageBlockBindingIndex(m_count_buffer, count_buffer_binding_index);
+    m_program.setShaderStorageBlockBindingIndex(m_index_buffer, index_buffer_binding_index);
+
+    m_program.dispatch({num_work_groups, 1, 1});
+}
 } // placement

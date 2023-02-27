@@ -175,7 +175,8 @@ private:
         if (severity == GL_DEBUG_SEVERITY_NOTIFICATION)
             return;
 
-        UNSCOPED_INFO("[GL DEBUG MESSAGE " << id << "] " << message);
+        throw std::runtime_error(message);
+        //UNSCOPED_INFO("[GL DEBUG MESSAGE " << id << "] " << message);
     }
 };
 
@@ -275,7 +276,7 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
     }
 
     const float footprint = GENERATE(take(3, random(0.01f, 0.1f)));
-    INFO("footprint = " << footprint);
+    CAPTURE(footprint);
 
     layer_data.footprint = footprint;
 
@@ -283,13 +284,13 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
     const float boundary_offset_y = GENERATE(take(3, random(0.f, 0.4f)));
     const glm::vec2 lower_bound(boundary_offset_x, boundary_offset_y);
 
-    INFO("lower_bound = " << lower_bound);
+    CAPTURE(lower_bound);
 
     const float boundary_size_x = GENERATE(take(3, random(0.6f, 1.0f)));
     const float boundary_size_y = GENERATE(take(3, random(0.6f, 1.0f)));
     const glm::vec2 upper_bound = lower_bound + glm::vec2(boundary_size_x, boundary_size_y);
 
-    INFO("upper_bound = " << upper_bound);
+    CAPTURE(upper_bound);
 
     SECTION("Determinism")
     {
@@ -341,18 +342,36 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
 
         REQUIRE(!elements.empty());
 
+        std::vector<std::pair<glm::vec2, glm::vec2>> collisions;
+        std::vector<glm::vec2> out_of_bounds;
+
         for (int i = 0; i < elements.size(); i++)
         {
-            CAPTURE(i, elements[i].position);
-            const glm::vec2 point{elements[i].position.x, elements[i].position.y};
-            CHECK(glm::all(glm::greaterThanEqual(point, lower_bound) && glm::lessThan(point, upper_bound)));
+            const glm::vec2 element_position_2d = elements[i].position;
+
+            if (glm::any(glm::lessThan(element_position_2d, lower_bound))
+                    || glm::any(glm::greaterThanEqual(element_position_2d, upper_bound)))
+                out_of_bounds.emplace_back(element_position_2d);
 
             for (int j = 0; j < i; j++)
             {
-                CAPTURE(j, elements[j].position);
-                CHECK(glm::length(point - glm::vec2(elements[j].position.x, elements[j].position.z)) >=
-                      Approx(footprint));
+                const glm::vec2 other_position_2d = elements[j].position;
+
+                if (glm::distance(element_position_2d, other_position_2d) < footprint)
+                    collisions.emplace_back(element_position_2d, other_position_2d);
             }
+        }
+
+        {
+            INFO("Out of bounds positions:");
+            CAPTURE(out_of_bounds);
+            CHECK(out_of_bounds.empty());
+        }
+
+        {
+            INFO("Colliding positions");
+            CAPTURE(collisions);
+            CHECK(collisions.empty());
         }
     }
 
@@ -457,7 +476,7 @@ TEST_CASE("PlacementPipeline (multiclass)", "[pipeline][multiclass]")
             const glm::vec2 position2d = elements[i].position;
 
             if (glm::all(glm::greaterThanEqual(position2d, lower_bound))
-                    && glm::all(glm::lessThan(position2d, upper_bound)))
+                && glm::all(glm::lessThan(position2d, upper_bound)))
                 out_of_bounds.emplace_back(elements[i]);
 
             for (std::size_t j = 0; j < i; j++)
@@ -510,22 +529,15 @@ TEST_CASE("GenerationKernel", "[generation][kernel]")
             for (auto j = 0u; j < wg_size.y; j++)
                 position_stencil[i][j] = glm::vec2(i, j) * wg_scale;
 
-        kernel.setWorkGroupPattern(position_stencil);
-        kernel.setWorkGroupScale(wg_scale);
-        kernel.setWorkGroupOffset({0, 0});
-
         constexpr glm::vec3 world_scale{1.0f};
-        kernel.setWorldScale(world_scale);
 
         const auto black_texture = s_texture_loader["assets/black.png"];
 
         const uint height_texture_unit = 0;
-        kernel.setHeightmapTextureUnit(height_texture_unit);
         gl.BindTextureUnit(height_texture_unit, black_texture);
 
         const auto footprint = GENERATE(take(3, random(0.01f, 0.1f)));
         INFO("footprint=" << footprint);
-        kernel.setFootprint(footprint);
 
         const glm::uvec2 wg_count{world_scale / (glm::vec3(wg_scale, 1.0f) * glm::vec3(wg_size))};
 
@@ -545,16 +557,12 @@ TEST_CASE("GenerationKernel", "[generation][kernel]")
         constexpr uint world_uv_binding_index = 1;
         constexpr uint density_binding_index = 2;
 
-        kernel.setCandidateBufferBindingIndex(candidate_binding_index);
-        kernel.setWorldUVBufferBindingIndex(world_uv_binding_index);
-        kernel.setDensityBufferBindingIndex(density_binding_index);
-
         buffer.bindRange(GL::Buffer::IndexedTarget::shader_storage, candidate_binding_index, candidate_range);
         buffer.bindRange(GL::Buffer::IndexedTarget::shader_storage, world_uv_binding_index, world_uv_range);
         buffer.bindRange(GL::Buffer::IndexedTarget::shader_storage, density_binding_index, density_range);
 
-        kernel.useProgram();
-        gl.DispatchCompute(wg_count.x, wg_count.y, 1);
+        kernel(wg_count, /*work group index offest*/ {0, 0}, footprint, world_scale,
+               height_texture_unit, candidate_binding_index, density_binding_index, world_uv_binding_index);
         gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
         std::vector<Result::Element> candidates;
@@ -586,7 +594,8 @@ TEST_CASE("GenerationKernel", "[generation][kernel]")
 
         SECTION("determinism")
         {
-            gl.DispatchCompute(wg_count.x, wg_count.y, 1);
+            kernel(wg_count, /*work group index offest*/ {0, 0}, footprint, world_scale,
+                   height_texture_unit, candidate_binding_index, density_binding_index, world_uv_binding_index);
             gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
             auto candidates_duplicate = candidates;
@@ -604,10 +613,30 @@ TEST_CASE("GenerationKernel", "[generation][kernel]")
     }
 }
 
+template<typename T>
+struct Difference
+{
+    std::size_t index;
+    std::pair<T, T> elements;
+
+    template<typename... Args>
+    Difference(std::size_t index, Args&& ... args)
+    : index(index), elements(std::forward<Args>(args)...)
+    {}
+};
+
+template<typename T>
+std::ostream& operator<<(std::ostream& out, const Difference<T>& diff)
+{
+    return out << '[' << diff.index << "] " << diff.elements.first << "!=" << diff.elements.second;
+}
+
 TEST_CASE("EvaluationKernel", "[evaluation][kernel]")
 {
-    const GLsizeiptr wg_count_x = GENERATE(take(3, random(1, 4)));
-    const GLsizeiptr wg_count_y = GENERATE(take(3, random(1, 4)));
+    const uint wg_count_x = GENERATE(take(3, random(1, 4)));
+    const uint wg_count_y = GENERATE(take(3, random(1, 4)));
+    const glm::uvec2 wg_count = {wg_count_x, wg_count_y};
+    CAPTURE(wg_count);
 
     const glm::vec2 world_boundaries{10.f};
 
@@ -625,13 +654,15 @@ TEST_CASE("EvaluationKernel", "[evaluation][kernel]")
 
     EvaluationKernel kernel;
 
-    kernel.setClassIndex(0);
-    kernel.setLowerBound(lower_bound);
-    kernel.setUpperBound(upper_bound);
-
     std::vector<Result::Element> candidates;
+    std::vector<Result::Element> expected_result;
     std::vector<glm::vec2> world_uvs;
     std::vector<float> densities;
+
+    candidates.reserve(candidate_count);
+    expected_result.reserve(candidate_count);
+    world_uvs.reserve(candidate_count);
+    densities.reserve(candidate_count);
 
     constexpr uint invalid_index = 0xFFffFFff;
 
@@ -645,9 +676,19 @@ TEST_CASE("EvaluationKernel", "[evaluation][kernel]")
             const float world_v = static_cast<float>(j) / static_cast<float>(candidate_count_y);
             const float position_y = world_v * world_boundaries.y;
 
-            candidates.push_back({glm::vec3(position_x, position_y, 0.f), invalid_index});
+            Result::Element new_candidate {glm::vec3(position_x, position_y, 0.f), invalid_index};
+
+            candidates.push_back(new_candidate);
             world_uvs.emplace_back(world_u, world_v);
             densities.emplace_back(0.0f);
+
+            const bool inside_bounds = glm::all(glm::greaterThanEqual(glm::vec2(new_candidate.position), lower_bound))
+                                        && glm::all(glm::lessThan(glm::vec2(new_candidate.position), upper_bound));
+
+            if (inside_bounds)
+                new_candidate.class_index = 0;
+
+            expected_result.emplace_back(new_candidate);
         }
     }
 
@@ -661,7 +702,7 @@ TEST_CASE("EvaluationKernel", "[evaluation][kernel]")
     const GL::Buffer::Range density_range{candidate_range.size + world_uv_range.size, density_size * candidate_count};
 
     buffer.allocateImmutable(candidate_range.size + world_uv_range.size + density_range.size,
-                             GL::Buffer::StorageFlags::dynamic_storage);
+                             GL::Buffer::StorageFlags::dynamic_storage | GL::Buffer::StorageFlags::map_read);
 
     buffer.write(candidate_range, candidates.data());
     buffer.write(world_uv_range, world_uvs.data());
@@ -671,61 +712,57 @@ TEST_CASE("EvaluationKernel", "[evaluation][kernel]")
     constexpr uint world_uv_binding_index = 1;
     constexpr uint density_binding_index = 2;
 
-    kernel.setCandidateBufferBindingIndex(candidate_binding_index);
-    kernel.setWorldUVBufferBindingIndex(world_uv_binding_index);
-    kernel.setDensityBufferBindingIndex(density_binding_index);
-
     buffer.bindRange(GL::Buffer::IndexedTarget::shader_storage, candidate_binding_index, candidate_range);
     buffer.bindRange(GL::Buffer::IndexedTarget::shader_storage, world_uv_binding_index, world_uv_range);
     buffer.bindRange(GL::Buffer::IndexedTarget::shader_storage, density_binding_index, density_range);
 
+    constexpr uint density_tex_unit = 0;
     const GLuint density_texture = s_texture_loader["assets/white.png"];
-    kernel.setDensityMapTextureUnit(0);
-    gl.BindTextureUnit(0, density_texture);
+    gl.BindTextureUnit(density_tex_unit, density_texture);
 
-    kernel.useProgram();
-    gl.DispatchCompute(wg_count_x, wg_count_y, 1);
+    kernel(wg_count, /*class index*/ 0, lower_bound, upper_bound, density_texture,
+           candidate_binding_index, world_uv_binding_index, density_binding_index);
     gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
-    std::vector<Result::Element> evaluated_candidates;
-    evaluated_candidates.resize(candidate_count);
-    buffer.read(candidate_range, evaluated_candidates.data());
-
-    std::vector<Result::Element> valid_out_of_bounds;
-    std::vector<Result::Element> invalid_inside_bounds;
-    std::vector<Result::Element> invalid_class_indices;
-
-    for (const auto &evaluated_candidate: evaluated_candidates)
     {
-        const bool inside_bounds = glm::all(glm::greaterThanEqual(glm::vec2(evaluated_candidate.position), lower_bound))
-                                   && glm::all(glm::lessThan(glm::vec2(evaluated_candidate.position), upper_bound));
+        INFO("Candidates");
 
-        if (evaluated_candidate.class_index == invalid_index)
+        auto mapped_ptr = static_cast<const Result::Element*>(buffer.mapRange(candidate_range, GL::Buffer::AccessFlags::read));
+        std::vector<Result::Element> computed_result {mapped_ptr, mapped_ptr + candidate_count};
+        buffer.unmap();
+
+        std::vector<Difference<Result::Element>> differences;
+
+        for (std::size_t i = 0; i < candidate_count; i++)
         {
-            if (inside_bounds)
-                invalid_inside_bounds.emplace_back(evaluated_candidate);
+            if (expected_result[i].position == computed_result[i].position
+                && expected_result[i].class_index == computed_result[i].class_index)
+                continue;
+
+            differences.emplace_back(i, expected_result[i], computed_result[i]);
         }
-        else if (evaluated_candidate.class_index == 0)
-        {
-            if (!inside_bounds)
-                valid_out_of_bounds.emplace_back(evaluated_candidate);
-        }
-        else
-            invalid_class_indices.emplace_back(evaluated_candidate);
+
+        CAPTURE(lower_bound, upper_bound, differences);
+        CHECK(differences.empty());
     }
 
-    CAPTURE(candidate_count, evaluated_candidates, lower_bound, upper_bound);
     {
-        CAPTURE(invalid_inside_bounds);
-        CHECK(invalid_inside_bounds.size() == 0);
-    }
-    {
-        CAPTURE(valid_out_of_bounds);
-        CHECK(valid_out_of_bounds.size() == 0);
-    }
-    {
-        CAPTURE(invalid_class_indices);
-        CHECK(invalid_class_indices.size() == 0);
+        INFO("Densities");
+
+        auto mapped_ptr = static_cast<const float*>(buffer.mapRange(density_range, GL::Buffer::AccessFlags::read));
+        std::vector<float> computed_densities {mapped_ptr, mapped_ptr + candidate_count};
+        buffer.unmap();
+
+        std::vector<Difference<float>> differences;
+
+        for (std::size_t i = 0; i < candidate_count; i++)
+        {
+            if (computed_densities[i] != 1.0f)
+                differences.emplace_back(i, computed_densities[i], 1.0f);
+        }
+
+        CAPTURE(differences);
+        CHECK(differences.empty());
     }
 }
 
@@ -799,18 +836,13 @@ TEST_CASE("IndexationKernel", "[indexation][kernel]")
 
     IndexationKernel kernel;
 
-    kernel.setCandidateBufferBindingIndex(candidate_binding_index);
-    kernel.setIndexBufferBindingIndex(index_binding_index);
-    kernel.setCountBufferBindingIndex(count_binding_index);
-
     buffer.bindRange(GL::BufferHandle::IndexedTarget::shader_storage, candidate_binding_index, candidate_range);
     buffer.bindRange(GL::BufferHandle::IndexedTarget::shader_storage, index_binding_index, index_range);
     buffer.bindRange(GL::BufferHandle::IndexedTarget::shader_storage, count_binding_index, count_range);
 
     const auto wg_count = IndexationKernel::calculateNumWorkGroups(candidate_count);
 
-    kernel.useProgram();
-    gl.DispatchCompute(wg_count.x, wg_count.y, wg_count.z);
+    kernel(wg_count, candidate_binding_index, count_binding_index, index_binding_index);
     gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
     buffer.read(count_range, computed_class_counts.data());
@@ -849,7 +881,7 @@ TEST_CASE("IndexationKernel", "[indexation][kernel]")
         const uint class_element_count = expected_class_counts[class_index];
         index_usage_count.resize(class_element_count);
 
-        for (auto copy_index : computed_indices_by_class[class_index])
+        for (auto copy_index: computed_indices_by_class[class_index])
         {
             if (copy_index >= class_element_count)
                 out_of_range_indices.emplace_back(copy_index);
@@ -957,21 +989,16 @@ TEST_CASE("CopyKernel", "[copy][kernel]")
     constexpr uint index_buffer_binding = 2;
     constexpr uint count_buffer_binding = 3;
 
-    kernel.setCandidateBufferBindingIndex(candidate_buffer_binding);
-    kernel.setOutputBufferBindingIndex(output_buffer_binding);
-    kernel.setIndexBufferBindingIndex(index_buffer_binding);
-    kernel.setCountBufferBindingIndex(count_buffer_binding);
-
     buffer.bindRange(BufferHandle::IndexedTarget::shader_storage, candidate_buffer_binding, candidate_range);
     buffer.bindRange(BufferHandle::IndexedTarget::shader_storage, output_buffer_binding, output_range);
     buffer.bindRange(BufferHandle::IndexedTarget::shader_storage, index_buffer_binding, index_range);
     buffer.bindRange(BufferHandle::IndexedTarget::shader_storage, count_buffer_binding, count_range);
 
-    const glm::uvec3 num_work_groups = CopyKernel::calculateNumWorkGroups(candidate_count);
+    const uint num_work_groups = CopyKernel::calculateNumWorkGroups(candidate_count);
     CAPTURE(candidate_count);
 
-    kernel.useProgram();
-    gl.DispatchCompute(num_work_groups.x, num_work_groups.y, num_work_groups.z);
+    kernel(num_work_groups,
+           candidate_buffer_binding, output_buffer_binding, index_buffer_binding, count_buffer_binding);
     gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
     const uint total_count = std::accumulate(element_counts.begin(), element_counts.end(), 0u);
@@ -982,7 +1009,7 @@ TEST_CASE("CopyKernel", "[copy][kernel]")
 
     buffer.unmap();
 
-    CHECK(expected_results == results);
+    CHECK(results == expected_results);
 }
 
 TEST_CASE("DiskDistributionGenerator")

@@ -38,25 +38,18 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
 
     // generation
     gl.BindTextureUnit(m_getHeightTexUnit(), world_data.heightmap);
-    m_generation_kernel.setWorldScale(world_data.scale);
-    m_generation_kernel.setFootprint(layer_data.footprint);
-    m_generation_kernel.setWorkGroupOffset(work_group_offset);
-
-    m_generation_kernel.useProgram();
-    ComputeShaderProgram::dispatch(num_work_groups);
+    m_generation_kernel(num_work_groups, work_group_offset, layer_data.footprint, world_data.scale,
+                        m_getHeightTexUnit(), m_getCandidateBufferBindingIndex(),
+                        m_getDensityBufferBindingIndex(), m_getWorldUVBufferBindingIndex());
     gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     // evaluation
-    m_evaluation_kernel.setLowerBound(lower_bound);
-    m_evaluation_kernel.setUpperBound(upper_bound);
-    m_evaluation_kernel.useProgram();
     const uint class_count = layer_data.densitymaps.size();
     for (std::size_t i = 0; i < class_count; i++)
     {
         gl.BindTextureUnit(m_getDensityTexUnit(), layer_data.densitymaps[i].texture);
-        m_evaluation_kernel.setClassIndex(i);
-
-        ComputeShaderProgram::dispatch(num_work_groups);
+        m_evaluation_kernel(num_work_groups, i, lower_bound, upper_bound, m_getDensityTexUnit(),
+                            m_getCandidateBufferBindingIndex(), m_getWorldUVBufferBindingIndex(), m_getDensityBufferBindingIndex());
         gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     }
 
@@ -77,13 +70,13 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
         result_buffer.gl_object.write(count_range, count_buffer_initializer.data());
     }
 
-    m_indexation_kernel.useProgram();
-    ComputeShaderProgram::dispatch(IndexationKernel::calculateNumWorkGroups(candidate_count));
+    m_indexation_kernel(IndexationKernel::calculateNumWorkGroups(candidate_count), m_getCandidateBufferBindingIndex(),
+                        m_getCountBufferBindingIndex(), m_getIndexBufferBindingIndex());
     gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     // copy
-    m_copy_kernel.useProgram();
-    ComputeShaderProgram::dispatch(CopyKernel::calculateNumWorkGroups(candidate_count));
+    m_copy_kernel(CopyKernel::calculateNumWorkGroups(candidate_count), m_getCandidateBufferBindingIndex(),
+                  m_getCountBufferBindingIndex(), m_getIndexBufferBindingIndex(), m_getOutputBufferBindingIndex());
     gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
     // fence
@@ -96,71 +89,26 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
 void PlacementPipeline::setBaseTextureUnit(GLuint index)
 {
     m_base_tex_unit = index;
-    m_generation_kernel.setHeightmapTextureUnit(m_getHeightTexUnit());
-    m_evaluation_kernel.setDensityMapTextureUnit(m_getDensityTexUnit());
 }
 
 void PlacementPipeline::setBaseShaderStorageBindingPoint(GLuint index)
 {
     m_base_binding_index = index;
-
-    // candidate buffer
-    {
-        const auto i = m_getCandidateBufferBindingIndex();
-        m_generation_kernel.setCandidateBufferBindingIndex(i);
-        m_evaluation_kernel.setCandidateBufferBindingIndex(i);
-        m_indexation_kernel.setCandidateBufferBindingIndex(i);
-        m_copy_kernel.setCandidateBufferBindingIndex(i);
-    }
-
-    // density buffer
-    {
-        const auto j = m_getDensityBufferBindingIndex();
-        m_generation_kernel.setDensityBufferBindingIndex(j);
-        m_evaluation_kernel.setDensityBufferBindingIndex(j);
-    }
-
-    // WorldUV buffer
-    {
-        const auto k = m_getWorldUVBufferBindingIndex();
-        m_generation_kernel.setWorldUVBufferBindingIndex(k);
-        m_evaluation_kernel.setWorldUVBufferBindingIndex(k);
-    }
-
-    // count buffer
-    {
-        const auto m = m_getCountBufferBindingIndex();
-        m_indexation_kernel.setCountBufferBindingIndex(m);
-        m_copy_kernel.setCountBufferBindingIndex(m);
-    }
-
-    // Index buffer
-    {
-        const auto l = m_getIndexBufferBindingIndex();
-        m_indexation_kernel.setIndexBufferBindingIndex(l);
-        m_copy_kernel.setIndexBufferBindingIndex(l);
-    }
-
-    // output buffer
-    m_copy_kernel.setOutputBufferBindingIndex(m_getOutputBufferBindingIndex());
 }
 
 void PlacementPipeline::setRandomSeed(uint seed)
 {
     constexpr auto wg_size = GenerationKernel::work_group_size;
-    // dart throwing algorithm for poisson disk distribution
-    const glm::vec2 wg_scale = glm::vec2(wg_size) * glm::vec2(wg_size);
-    m_generation_kernel.setWorkGroupScale(wg_scale);
 
-    DiskDistributionGenerator generator{1.0f, wg_scale};
+    DiskDistributionGenerator generator{1.0f, wg_size * 2u};
     generator.setSeed(seed);
     generator.setMaxAttempts(100);
+    m_generation_kernel.setWorkGroupPatternBoundaries(generator.getGrid().getBounds());
 
     std::array<std::array<glm::vec2, wg_size.y>, wg_size.x> positions;
-
-    for (uint i = 0; i < wg_size.x; i++)
-        for (uint j = 0; j < wg_size.y; j++)
-            positions[i][j] = generator.generate();
+    for (auto& column : positions)
+        for (auto& cell : column)
+            cell = generator.generate();
 
     m_generation_kernel.setWorkGroupPatternColumns(positions);
 }

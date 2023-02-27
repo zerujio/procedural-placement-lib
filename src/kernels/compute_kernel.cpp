@@ -29,8 +29,9 @@ void ComputeShaderProgram::useProgram() const
     gl.UseProgram(m_program.getName());
 }
 
-void ComputeShaderProgram::dispatch(glm::uvec3 num_work_groups)
+void ComputeShaderProgram::dispatch(glm::uvec3 num_work_groups) const
 {
+    useProgram();
     gl.DispatchCompute(num_work_groups.x, num_work_groups.y, num_work_groups.z);
 }
 

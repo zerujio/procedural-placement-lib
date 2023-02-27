@@ -70,4 +70,25 @@ GenerationKernel::GenerationKernel()
         m_density_buf(m_program.getShaderStorageBlockIndex("DensityBuffer"))
 {}
 
+void GenerationKernel::operator()(glm::uvec2 num_work_groups, glm::uvec2 group_offset, float footprint,
+                                  glm::vec3 world_scale, GLuint heightmap_texture_unit,
+                                  GLuint candidate_buffer_binding_index, GLuint density_buffer_binding_index,
+                                  GLuint world_uv_buffer_binding_index)
+{
+    // uniforms
+    m_program.setUniform(m_work_group_offset, group_offset);
+    m_program.setUniform(m_footprint, footprint);
+    m_program.setUniform(m_world_scale, world_scale);
+
+    // textures
+    m_program.setUniform(m_heightmap_tex, static_cast<GLint>(heightmap_texture_unit));
+
+    // ssbo bindings
+    m_program.setShaderStorageBlockBindingIndex(m_candidate_buf, candidate_buffer_binding_index);
+    m_program.setShaderStorageBlockBindingIndex(m_density_buf, density_buffer_binding_index);
+    m_program.setShaderStorageBlockBindingIndex(m_world_uv_buf, world_uv_buffer_binding_index);
+
+    m_program.dispatch({num_work_groups, 1});
+}
+
 } // placement

@@ -18,7 +18,8 @@ public:
     /// Equivalent to calling glUseProgram with this kernel's program name.
     void useProgram() const;
 
-    static void dispatch(glm::uvec3 num_work_groups);
+    /// bind and dispatch this program.
+    void dispatch(glm::uvec3 num_work_groups) const;
 
     /// Compile and link a compute shader from source code.
     explicit ComputeShaderProgram(const char *source_string) : ComputeShaderProgram(1, &source_string)
