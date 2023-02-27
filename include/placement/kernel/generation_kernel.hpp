@@ -8,8 +8,6 @@
 
 namespace placement {
 
-//TODO: rewrite other kerenels.
-
 class GenerationKernel final
 {
 public:

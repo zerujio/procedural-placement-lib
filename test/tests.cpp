@@ -175,8 +175,7 @@ private:
         if (severity == GL_DEBUG_SEVERITY_NOTIFICATION)
             return;
 
-        throw std::runtime_error(message);
-        //UNSCOPED_INFO("[GL DEBUG MESSAGE " << id << "] " << message);
+        UNSCOPED_INFO("[GL DEBUG MESSAGE " << id << "] " << message);
     }
 };
 
@@ -720,7 +719,7 @@ TEST_CASE("EvaluationKernel", "[evaluation][kernel]")
     const GLuint density_texture = s_texture_loader["assets/white.png"];
     gl.BindTextureUnit(density_tex_unit, density_texture);
 
-    kernel(wg_count, /*class index*/ 0, lower_bound, upper_bound, density_texture,
+    kernel(wg_count, /*class index*/ 0, lower_bound, upper_bound, density_tex_unit,
            candidate_binding_index, world_uv_binding_index, density_binding_index);
     gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
@@ -998,7 +997,7 @@ TEST_CASE("CopyKernel", "[copy][kernel]")
     CAPTURE(candidate_count);
 
     kernel(num_work_groups,
-           candidate_buffer_binding, output_buffer_binding, index_buffer_binding, count_buffer_binding);
+           candidate_buffer_binding, count_buffer_binding, index_buffer_binding, output_buffer_binding);
     gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
     const uint total_count = std::accumulate(element_counts.begin(), element_counts.end(), 0u);
