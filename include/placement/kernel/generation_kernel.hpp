@@ -18,7 +18,7 @@ public:
     /// Dispatch the compute kernel with the specified arguments.
     void operator()(glm::uvec2 num_work_groups, glm::uvec2 group_offset, float footprint, glm::vec3 world_scale,
                     GLuint heightmap_texture_unit, GLuint candidate_buffer_binding_index,
-                    GLuint density_buffer_binding_index, GLuint world_uv_buffer_binding_index);
+                    GLuint world_uv_buffer_binding_index, GLuint density_buffer_binding_index);
 
     template<typename ArrayLike>
     void setWorkGroupPattern(const ArrayLike &values)

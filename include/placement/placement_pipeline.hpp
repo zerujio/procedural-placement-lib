@@ -92,29 +92,22 @@ public:
     void setBaseShaderStorageBindingPoint(GLuint index);
 
 private:
+    class TransientBuffer;
 
-    [[nodiscard]] uint m_getCandidateBufferBindingIndex() const noexcept { return m_base_binding_index + 0; }
-    [[nodiscard]] uint m_getDensityBufferBindingIndex() const noexcept { return m_base_binding_index + 1; }
-    [[nodiscard]] uint m_getWorldUVBufferBindingIndex() const noexcept { return m_base_binding_index + 2; }
-    [[nodiscard]] uint m_getIndexBufferBindingIndex() const noexcept { return m_base_binding_index + 3; }
-    [[nodiscard]] uint m_getCountBufferBindingIndex() const noexcept { return m_base_binding_index + 4; }
-    [[nodiscard]] uint m_getOutputBufferBindingIndex() const noexcept { return m_base_binding_index + 5; }
-
-    [[nodiscard]] uint m_getHeightTexUnit() const noexcept { return m_base_tex_unit + 0; }
-    [[nodiscard]] uint m_getDensityTexUnit() const noexcept { return m_base_tex_unit + 1; }
-
-    [[nodiscard]] GL::Buffer::Range m_getResultRange() const;
+    [[nodiscard]] static ResultBuffer s_makeResultBuffer(uint candidate_count, uint class_count);
+    [[nodiscard]] static auto s_makeBindingArray(const TransientBuffer& transient_buffer,
+                                                 const ResultBuffer& result_buffer);
+    [[nodiscard]] uint m_getBindingIndex(uint buffer_index) const;
 
     uint m_base_tex_unit {0};
     uint m_base_binding_index {0};
+    glm::vec2 m_work_group_scale;
     GenerationKernel m_generation_kernel;
     EvaluationKernel m_evaluation_kernel;
     IndexationKernel m_indexation_kernel;
     CopyKernel m_copy_kernel;
 
-    static constexpr glm::vec2 s_wg_scale_factor {2.5f};
-
-    class Buffer
+    class TransientBuffer
     {
     public:
         void resize(GLsizeiptr candidate_count);

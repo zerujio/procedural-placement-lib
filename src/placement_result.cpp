@@ -6,7 +6,7 @@ namespace placement {
 
 constexpr GLintptr uint_size = sizeof(GLuint);
 
-Result::Result(ResultBuffer &&buffer) : m_buffer(std::move(buffer)), m_index_offset(m_buffer.num_classes + 1, 0u)
+Result::Result(ResultBuffer &&buffer) : m_buffer(std::move(buffer)), m_index_offset(m_buffer.num_classes + 1)
 {
     m_buffer.gl_object.read(0, m_buffer.num_classes * uint_size, m_index_offset.data() + 1);
 

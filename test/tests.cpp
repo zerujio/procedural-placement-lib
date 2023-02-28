@@ -101,7 +101,8 @@ private:
         GLuint texture;
         glm::ivec2 texture_size;
         int channels;
-        std::unique_ptr<stbi_uc[]> texture_data{stbi_load(filename, &texture_size.x, &texture_size.y, &channels, 0)};
+        std::unique_ptr<stbi_uc[], void (*)(void *)> texture_data
+                {stbi_load(filename, &texture_size.x, &texture_size.y, &channels, 0), stbi_image_free};
 
         if (!texture_data)
             throw std::runtime_error(stbi_failure_reason());
@@ -125,7 +126,7 @@ class ContextInitializer : public Catch::TestEventListenerBase
 public:
     using Catch::TestEventListenerBase::TestEventListenerBase;
 
-    void testRunStarting(const Catch::TestRunInfo &) override
+    void testCaseStarting(const Catch::TestCaseInfo &) override
     {
         if (!glfwInit())
         {
@@ -153,16 +154,11 @@ public:
         gl.Enable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
     }
 
-    void testRunEnded(const Catch::TestRunStats &) override
+    void testCaseEnded(const Catch::TestCaseStats &) override
     {
         s_texture_loader.clear();
         glfwDestroyWindow(m_window);
         glfwTerminate();
-    }
-
-    void sectionEnded(const Catch::SectionStats &) override
-    {
-        gl.Finish();
     }
 
 private:
@@ -197,6 +193,61 @@ bool vecOrder(const Vec &l, const Vec &r)
         return std::make_tuple(l.x, l.y, l.z, l.w) < std::make_tuple(r.x, r.y, r.z, r.w);
 };
 
+// begin: Utilities
+
+template<typename T>
+struct Difference
+{
+    std::size_t index;
+    std::pair<T, T> elements;
+
+    template<typename... Args>
+    Difference(std::size_t index, Args &&... args)
+            : index(index), elements(std::forward<Args>(args)...)
+    {}
+};
+
+template<typename LArray, typename RArray>
+[[nodiscard]] auto findDifferences(const LArray& l_array, const RArray& r_array)
+{
+    if (std::size(l_array) != std::size(r_array))
+        throw std::logic_error("attempt to diff arrays of different size");
+
+    std::vector<Difference<decltype(l_array[0])>> diffs;
+
+    for (std::size_t i = 0; i < std::size(l_array); i++)
+    {
+        const auto& l = l_array[i];
+        const auto& r = r_array[i];
+        if (!(l == r))
+            diffs.emplace_back(i, l, r);
+    }
+
+    return diffs;
+}
+
+
+template<typename T>
+std::ostream &operator<<(std::ostream &out, const Difference<T> &diff)
+{
+    return out << '[' << diff.index << "] " << diff.elements.first << "!=" << diff.elements.second;
+}
+
+template<typename T>
+class EqualToValue
+{
+public:
+    explicit EqualToValue(T value) : m_value(value)
+    {}
+
+    [[nodiscard]] bool operator()(const T &other_value)
+    { return m_value == other_value; }
+
+private:
+    T m_value;
+};
+
+
 bool elementCompare(const placement::Result::Element &l, const placement::Result::Element &r)
 {
     return std::make_tuple(l.class_index, l.position.x, l.position.y, l.position.z) <
@@ -204,9 +255,13 @@ bool elementCompare(const placement::Result::Element &l, const placement::Result
 };
 
 namespace placement {
+
 bool operator==(const Result::Element &l, const Result::Element &r)
 { return l.position == r.position && l.class_index == r.class_index; }
+
 } // placement
+
+// end: Utilities
 
 TEST_CASE("PlacementPipeline", "[pipeline]")
 {
@@ -214,10 +269,10 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
 
     placement::PlacementPipeline pipeline;
 
-    placement::WorldData world_data{{10.0f, 1.0f, 10.0f}, s_texture_loader["assets/black.png"]};
-    placement::LayerData layer_data{1.0f, {{s_texture_loader["assets/white.png"]}}};
+    placement::WorldData world_data{{10.f, 10.f, 1.f}, s_texture_loader["assets/black.png"]};
+    placement::LayerData layer_data{1.f, {{s_texture_loader["assets/white.png"]}}};
 
-    SECTION("Placement with < 0 area should return an empty vector")
+    SECTION("Placement with zero area should return an empty vector")
     {
         auto result = pipeline.computePlacement(world_data, layer_data, {0.0f, 0.0f}, {-1.0f, -1.0f}).readResult();
         CHECK(result.getNumClasses() == 1);
@@ -238,22 +293,21 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
         CHECK(result.getElementArrayLength() == 0);
 
         points = result.copyAllToHost();
-        REQUIRE(!points.empty());
+        REQUIRE(points.empty());
     }
 
     SECTION("Determinism (simple)")
     {
-        world_data.scale = {1.0f, 1.0f, 1.0f};
+        const auto result_0 = pipeline.computePlacement(world_data, layer_data, glm::vec2(0.f), world_data.scale)
+                                      .readResult();
+        REQUIRE(result_0.getElementArrayLength() > 0);
 
-        auto positions_0 = pipeline.computePlacement(world_data, layer_data, glm::vec2(0.f), glm::vec2(1.f))
-                                   .readResult()
-                                   .copyAllToHost();
-        auto positions_1 = pipeline.computePlacement(world_data, layer_data, glm::vec2(0.f), glm::vec2(1.f))
-                                   .readResult()
-                                   .copyAllToHost();
+        const auto result_1 = pipeline.computePlacement(world_data, layer_data, glm::vec2(0.f), world_data.scale)
+                                      .readResult();
+        REQUIRE(result_1.getElementArrayLength() > 0);
 
-        CHECK(!positions_0.empty());
-        CHECK(!positions_1.empty());
+        auto positions_0 = result_0.copyAllToHost();
+        auto positions_1 = result_1.copyAllToHost();
 
         {
             CAPTURE(positions_0, positions_1);
@@ -275,14 +329,12 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
     }
 
     const float footprint = GENERATE(take(3, random(0.01f, 0.1f)));
-    CAPTURE(footprint);
-
     layer_data.footprint = footprint;
+    CAPTURE(footprint);
 
     const float boundary_offset_x = GENERATE(take(3, random(0.f, 0.4f)));
     const float boundary_offset_y = GENERATE(take(3, random(0.f, 0.4f)));
     const glm::vec2 lower_bound(boundary_offset_x, boundary_offset_y);
-
     CAPTURE(lower_bound);
 
     const float boundary_size_x = GENERATE(take(3, random(0.6f, 1.0f)));
@@ -349,7 +401,7 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
             const glm::vec2 element_position_2d = elements[i].position;
 
             if (glm::any(glm::lessThan(element_position_2d, lower_bound))
-                    || glm::any(glm::greaterThanEqual(element_position_2d, upper_bound)))
+                || glm::any(glm::greaterThanEqual(element_position_2d, upper_bound)))
                 out_of_bounds.emplace_back(element_position_2d);
 
             for (int j = 0; j < i; j++)
@@ -474,8 +526,8 @@ TEST_CASE("PlacementPipeline (multiclass)", "[pipeline][multiclass]")
         {
             const glm::vec2 position2d = elements[i].position;
 
-            if (glm::all(glm::greaterThanEqual(position2d, lower_bound))
-                && glm::all(glm::lessThan(position2d, upper_bound)))
+            if (glm::any(glm::lessThan(position2d, lower_bound)) ||
+                glm::any(glm::greaterThanEqual(position2d, upper_bound)))
                 out_of_bounds.emplace_back(elements[i]);
 
             for (std::size_t j = 0; j < i; j++)
@@ -502,15 +554,31 @@ TEST_CASE("PlacementPipeline (multiclass)", "[pipeline][multiclass]")
 
     SECTION("Determinism")
     {
+        const auto sort_result = [](const Result& result)
+        {
+            auto elements = result.copyAllToHost();
+            std::sort(elements.begin(), elements.end(), elementCompare);
+            return elements;
+        };
+
         auto results_1 = pipeline.computePlacement(world_data, layer_data, lower_bound, upper_bound).readResult();
         auto results_2 = pipeline.computePlacement(world_data, layer_data, lower_bound, upper_bound).readResult();
 
-        const auto positions_0 = results.copyAllToHost();
-        const auto positions_1 = results_1.copyAllToHost();
-        const auto positions_2 = results_2.copyAllToHost();
+        const auto positions_0 = sort_result(results);
+        const auto positions_1 = sort_result(results_1);
+        const auto positions_2 = sort_result(results_2);
 
-        CHECK(positions_0 == positions_1);
-        CHECK(positions_0 == positions_2);
+        {
+            const auto diffs_01 = findDifferences(positions_0, positions_1);
+            CAPTURE(diffs_01);
+            CHECK(diffs_01.empty());
+        }
+
+        {
+            const auto diffs_02 = findDifferences(positions_0, positions_2);
+            CAPTURE(diffs_02);
+            CHECK(diffs_02.empty());
+        }
     }
 }
 
@@ -518,116 +586,121 @@ TEST_CASE("GenerationKernel", "[generation][kernel]")
 {
     GenerationKernel kernel;
 
+    constexpr auto wg_size = GenerationKernel::work_group_size;
+    constexpr glm::vec2 wg_scale{1.0f};
+
+    glm::vec2 position_stencil[wg_size.x][wg_size.y];
+    for (auto i = 0u; i < wg_size.x; i++)
+        for (auto j = 0u; j < wg_size.y; j++)
+            position_stencil[i][j] = glm::vec2(i, j) * wg_scale;
+
+    constexpr glm::vec3 world_scale{1.0f};
+
+    const auto black_texture = s_texture_loader["assets/black.png"];
+
+    const uint height_texture_unit = 0;
+    gl.BindTextureUnit(height_texture_unit, black_texture);
+
+    const auto footprint = GENERATE(take(3, random(0.01f, 0.1f)));
+    CAPTURE(footprint);
+
+    const glm::uvec2 wg_count{world_scale / (glm::vec3(wg_scale, 1.0f) * glm::vec3(wg_size))};
+
+    const std::size_t candidate_count = wg_count.x * wg_count.y * wg_size.x * wg_size.y;
+
+    GL::Buffer buffer;
+    const GL::Buffer::Range candidate_range{0, GenerationKernel::getCandidateBufferSizeRequirement({wg_count, 1})};
+    const GL::Buffer::Range world_uv_range{candidate_range.offset + candidate_range.size,
+                                           GenerationKernel::getWorldUVBufferSizeRequirement({wg_count, 1})};
+    const GL::Buffer::Range density_range{world_uv_range.offset + world_uv_range.size,
+                                          GenerationKernel::getDensityBufferMemoryRequirement({wg_count, 1})};
+
+    buffer.allocateImmutable(candidate_range.size + world_uv_range.size + density_range.size,
+                             GL::BufferHandle::StorageFlags::map_read);
+
+    constexpr uint candidate_binding_index = 0;
+    constexpr uint world_uv_binding_index = 1;
+    constexpr uint density_binding_index = 2;
+
+    buffer.bindRange(GL::Buffer::IndexedTarget::shader_storage, candidate_binding_index, candidate_range);
+    buffer.bindRange(GL::Buffer::IndexedTarget::shader_storage, world_uv_binding_index, world_uv_range);
+    buffer.bindRange(GL::Buffer::IndexedTarget::shader_storage, density_binding_index, density_range);
+
+    kernel(wg_count, /*work group index offset*/ {0, 0}, footprint, world_scale,
+           height_texture_unit, candidate_binding_index, world_uv_binding_index, density_binding_index);
+    gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+
+    std::vector<Result::Element> candidates;
+    candidates.resize(candidate_count);
+    buffer.read(candidate_range, candidates.data());
+
+    std::vector<glm::vec2> world_uvs;
+    world_uvs.resize(candidate_count);
+    buffer.read(world_uv_range, world_uvs.data());
+
+    std::vector<float> densities;
+    densities.resize(candidate_count);
+    buffer.read(density_range, densities.data());
+
     SECTION("correctness")
     {
-        constexpr auto wg_size = GenerationKernel::work_group_size;
-        constexpr glm::vec2 wg_scale{1.0f};
+        using Candidate = Result::Element;
 
-        glm::vec2 position_stencil[wg_size.x][wg_size.y];
-        for (auto i = 0u; i < wg_size.x; i++)
-            for (auto j = 0u; j < wg_size.y; j++)
-                position_stencil[i][j] = glm::vec2(i, j) * wg_scale;
-
-        constexpr glm::vec3 world_scale{1.0f};
-
-        const auto black_texture = s_texture_loader["assets/black.png"];
-
-        const uint height_texture_unit = 0;
-        gl.BindTextureUnit(height_texture_unit, black_texture);
-
-        const auto footprint = GENERATE(take(3, random(0.01f, 0.1f)));
-        INFO("footprint=" << footprint);
-
-        const glm::uvec2 wg_count{world_scale / (glm::vec3(wg_scale, 1.0f) * glm::vec3(wg_size))};
-
-        const std::size_t candidate_count = wg_count.x * wg_count.y * wg_size.x * wg_size.y;
-
-        GL::Buffer buffer;
-        const GL::Buffer::Range candidate_range{0, GenerationKernel::getCandidateBufferSizeRequirement({wg_count, 1})};
-        const GL::Buffer::Range world_uv_range{candidate_range.offset + candidate_range.size,
-                                               GenerationKernel::getWorldUVBufferSizeRequirement({wg_count, 1})};
-        const GL::Buffer::Range density_range{world_uv_range.offset + world_uv_range.size,
-                                              GenerationKernel::getDensityBufferMemoryRequirement({wg_count, 1})};
-
-        buffer.allocateImmutable(candidate_range.size + world_uv_range.size + density_range.size,
-                                 GL::BufferHandle::StorageFlags::map_read);
-
-        constexpr uint candidate_binding_index = 0;
-        constexpr uint world_uv_binding_index = 1;
-        constexpr uint density_binding_index = 2;
-
-        buffer.bindRange(GL::Buffer::IndexedTarget::shader_storage, candidate_binding_index, candidate_range);
-        buffer.bindRange(GL::Buffer::IndexedTarget::shader_storage, world_uv_binding_index, world_uv_range);
-        buffer.bindRange(GL::Buffer::IndexedTarget::shader_storage, density_binding_index, density_range);
-
-        kernel(wg_count, /*work group index offest*/ {0, 0}, footprint, world_scale,
-               height_texture_unit, candidate_binding_index, density_binding_index, world_uv_binding_index);
-        gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
-
-        std::vector<Result::Element> candidates;
-        candidates.resize(candidate_count);
-        buffer.read(candidate_range, candidates.data());
-
-        std::vector<glm::vec2> world_uvs;
-        world_uvs.resize(candidate_count);
-        buffer.read(world_uv_range, world_uvs.data());
-
-        std::vector<float> densities;
-        densities.resize(candidate_count);
-        buffer.read(density_range, densities.data());
-
-        SECTION("correctness")
         {
-            constexpr glm::vec2 lower_bound{0};
-            constexpr glm::vec2 upper_bound{world_scale};
+            constexpr uint invalid_index = 0xFFffFFff;
+            INFO("candidate class index must be initialized to " << invalid_index);
+            CHECK(std::all_of(candidates.begin(), candidates.end(),
+                              [=](const Candidate &c)
+                              { return c.class_index == invalid_index; }));
+        }
 
-            for (std::size_t i = 0; i < candidate_count; i++)
+        {
+            INFO("density must be initialized to 0.0f");
+            CHECK(std::all_of(densities.begin(), densities.end(), EqualToValue(0.0f)));
+        }
+
+        {
+            INFO("uv * world_scale must equal position.xy");
+            CHECK(std::equal(candidates.begin(), candidates.end(), world_uvs.begin(),
+                             [=](const Candidate &c, glm::vec2 uv)
+                             {
+                                 return c.position.x == Approx(uv.x * world_scale.x) &&
+                                        c.position.y == Approx(uv.y * world_scale.y);
+                             }));
+        }
+
+        {
+            INFO("minimum separation equal to footprint");
+            for (auto iter_i = candidates.begin(); iter_i != candidates.end(); iter_i++)
             {
-                CAPTURE(i);
-                CHECK(glm::all(glm::lessThanEqual(candidates[i].position, world_scale)));
-                CHECK(candidates[i].class_index == -1u);
-                CHECK(glm::all(glm::lessThanEqual(world_uvs[i], glm::vec2(1))));
-                CHECK(densities[i] == 1.0f);
+                const glm::vec2 pos_i = iter_i->position;
+                for (auto iter_j = candidates.begin(); iter_j != iter_i; iter_j++)
+                {
+                    const glm::vec2 pos_j = iter_j->position;
+                    REQUIRE(glm::distance(pos_i, pos_j) > footprint);
+                }
             }
         }
-
-        SECTION("determinism")
-        {
-            kernel(wg_count, /*work group index offest*/ {0, 0}, footprint, world_scale,
-                   height_texture_unit, candidate_binding_index, density_binding_index, world_uv_binding_index);
-            gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
-
-            auto candidates_duplicate = candidates;
-            auto world_uvs_duplicate = world_uvs;
-            auto densities_duplicate = densities;
-
-            buffer.read(candidate_range, candidates_duplicate.data());
-            buffer.read(world_uv_range, world_uvs_duplicate.data());
-            buffer.read(density_range, densities_duplicate.data());
-
-            CHECK(candidates == candidates_duplicate);
-            CHECK(world_uvs == world_uvs_duplicate);
-            CHECK(densities == densities_duplicate);
-        }
     }
-}
 
-template<typename T>
-struct Difference
-{
-    std::size_t index;
-    std::pair<T, T> elements;
+    SECTION("determinism")
+    {
+        kernel(wg_count, /*work group index offest*/ {0, 0}, footprint, world_scale,
+               height_texture_unit, candidate_binding_index, world_uv_binding_index, density_binding_index);
+        gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
-    template<typename... Args>
-    Difference(std::size_t index, Args&& ... args)
-    : index(index), elements(std::forward<Args>(args)...)
-    {}
-};
+        auto candidates_duplicate = candidates;
+        auto world_uvs_duplicate = world_uvs;
+        auto densities_duplicate = densities;
 
-template<typename T>
-std::ostream& operator<<(std::ostream& out, const Difference<T>& diff)
-{
-    return out << '[' << diff.index << "] " << diff.elements.first << "!=" << diff.elements.second;
+        buffer.read(candidate_range, candidates_duplicate.data());
+        buffer.read(world_uv_range, world_uvs_duplicate.data());
+        buffer.read(density_range, densities_duplicate.data());
+
+        CHECK(candidates == candidates_duplicate);
+        CHECK(world_uvs == world_uvs_duplicate);
+        CHECK(densities == densities_duplicate);
+    }
 }
 
 TEST_CASE("EvaluationKernel", "[evaluation][kernel]")
@@ -675,14 +748,14 @@ TEST_CASE("EvaluationKernel", "[evaluation][kernel]")
             const float world_v = static_cast<float>(j) / static_cast<float>(candidate_count_y);
             const float position_y = world_v * world_boundaries.y;
 
-            Result::Element new_candidate {glm::vec3(position_x, position_y, 0.f), invalid_index};
+            Result::Element new_candidate{glm::vec3(position_x, position_y, 0.f), invalid_index};
 
             candidates.push_back(new_candidate);
             world_uvs.emplace_back(world_u, world_v);
             densities.emplace_back(0.0f);
 
             const bool inside_bounds = glm::all(glm::greaterThanEqual(glm::vec2(new_candidate.position), lower_bound))
-                                        && glm::all(glm::lessThan(glm::vec2(new_candidate.position), upper_bound));
+                                       && glm::all(glm::lessThan(glm::vec2(new_candidate.position), upper_bound));
 
             if (inside_bounds)
                 new_candidate.class_index = 0;
@@ -726,8 +799,9 @@ TEST_CASE("EvaluationKernel", "[evaluation][kernel]")
     {
         INFO("Candidates");
 
-        auto mapped_ptr = static_cast<const Result::Element*>(buffer.mapRange(candidate_range, GL::Buffer::AccessFlags::read));
-        std::vector<Result::Element> computed_result {mapped_ptr, mapped_ptr + candidate_count};
+        auto mapped_ptr = static_cast<const Result::Element *>(buffer.mapRange(candidate_range,
+                                                                               GL::Buffer::AccessFlags::read));
+        std::vector<Result::Element> computed_result{mapped_ptr, mapped_ptr + candidate_count};
         buffer.unmap();
 
         std::vector<Difference<Result::Element>> differences;
@@ -748,8 +822,8 @@ TEST_CASE("EvaluationKernel", "[evaluation][kernel]")
     {
         INFO("Densities");
 
-        auto mapped_ptr = static_cast<const float*>(buffer.mapRange(density_range, GL::Buffer::AccessFlags::read));
-        std::vector<float> computed_densities {mapped_ptr, mapped_ptr + candidate_count};
+        auto mapped_ptr = static_cast<const float *>(buffer.mapRange(density_range, GL::Buffer::AccessFlags::read));
+        std::vector<float> computed_densities{mapped_ptr, mapped_ptr + candidate_count};
         buffer.unmap();
 
         std::vector<Difference<float>> differences;
@@ -1004,7 +1078,7 @@ TEST_CASE("CopyKernel", "[copy][kernel]")
 
     auto output_ptr = static_cast<const Candidate *>(buffer.mapRange(output_range, GL::Buffer::AccessFlags::read));
 
-    std::vector<Candidate> results{output_ptr, output_ptr + total_count};
+    std::vector<Candidate> results(output_ptr, output_ptr + total_count);
 
     buffer.unmap();
 
@@ -1173,7 +1247,7 @@ TEST_CASE("SSBO alignment")
                 "#version 450 core\n"
                 "layout(local_size_x = 16) in;"
                 "struct Candidate { vec3 position; uint index; };\n"
-                "layout(std430, binding=0) buffer Buffer { Candidate[] candidates; };\n"
+                "layout(std430, binding=0) buffer TransientBuffer { Candidate[] candidates; };\n"
                 "void main() "
                 "{"
                 "   candidates[gl_GlobalInvocationID.x] = Candidate(vec3(gl_GlobalInvocationID.x),"
@@ -1205,7 +1279,7 @@ TEST_CASE("SSBO alignment")
         GL::Program program = compile_compute_shader(
                 "#version 450 core\n"
                 "layout(local_size_x=16) in;\n"
-                "layout(std430, binding=0) buffer Buffer { vec3 positions[]; };\n"
+                "layout(std430, binding=0) buffer TransientBuffer { vec3 positions[]; };\n"
                 "void main() { positions[gl_GlobalInvocationID.x] = vec3(gl_GlobalInvocationID.x); }");
 
         buffer.allocateImmutable(sizeof(results), GL::Buffer::StorageFlags::none);

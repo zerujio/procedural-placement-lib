@@ -109,8 +109,9 @@ void main() {frag_color = vec4(1.0f);}
     // meshes
     const auto [axes_mesh, axes_program] = makeAxes();
 
-    simple::Mesh square_mesh {{{0, 0, 0}, {0, 0, 1}, {1, 0, 1}, {1, 0, 0}},
-                              {{1, .5, 0}, {1, .5, 0}, {1, .5, 0}, {1, .5, 0}}};
+    simple::Mesh square_mesh (std::array<glm::vec3, 4>{glm::vec3(0), {0, 0, 1}, {1, 0, 1}, {1, 0, 0}},
+                              std::array<glm::vec3, 4>{glm::vec3{1, .5, 0}, {1, .5, 0}, {1, .5, 0}, {1, .5, 0}},
+                              {});
     square_mesh.setDrawMode(simple::DrawMode::line_loop);
 
     SimpleInstancedMesh instanced_mesh {generateCirclePositions(12)};
@@ -118,14 +119,16 @@ void main() {frag_color = vec4(1.0f);}
     instanced_mesh.updateInstanceData(pipeline); // generated positions are copied to the instance position buffer
 
     simple::Mesh cube_lines {
-        {{0, 0, 0}, {0, 0, 1}, {1, 0, 1}, {1, 0, 0},
-         {0, 1, 0}, {0, 1, 1}, {1, 1, 1}, {1, 1, 0}},
+        std::array<glm::vec3, 8>
+                {glm::vec3{0, 0, 0}, {0, 0, 1}, {1, 0, 1}, {1, 0, 0}, {0, 1, 0}, {0, 1, 1}, {1, 1, 1}, {1, 1, 0}},
         {},
         {},
+        std::array<uint, 24>
         {0, 1,  0, 3,  0, 4,
          2, 1,  2, 3,  2, 6,
          5, 1,  5, 4,  5, 6,
-         7, 3,  7, 4,  7, 6}};
+         7, 3,  7, 4,  7, 6}
+    };
     cube_lines.setDrawMode(simple::DrawMode::lines);
 
     // transformation matrices

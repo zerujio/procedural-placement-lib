@@ -35,6 +35,17 @@ struct ResultBuffer
     unsigned int num_classes;   ///< Number of placement classes in the buffer.
     GLsizeiptr size;        ///< Total size of the buffer, in bytes.
     GL::Buffer gl_object;       ///< GL buffer object.
+
+    [[nodiscard]] constexpr GL::Buffer::Range getCountRange() const
+    {
+        return {0, static_cast<GLintptr>(num_classes * sizeof(unsigned int))};
+    }
+
+    [[nodiscard]] constexpr GL::Buffer::Range getElementRange() const
+    {
+        const auto count_size = static_cast<GLintptr>(num_classes * sizeof(unsigned int));
+        return {count_size, size - count_size};
+    }
 };
 
 /**
