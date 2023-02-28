@@ -13,6 +13,31 @@
 
 #include <memory>
 
+class ResultMesh : public simple::Drawable
+{
+public:
+    explicit ResultMesh(placement::Result result) : m_result(std::move(result))
+    {
+        const auto &result_buffer = m_result.getBuffer();
+        m_vertex_array.bindVertexBuffer(0, result_buffer.gl_object, result_buffer.getElementRange().offset,
+                                        sizeof(glm::vec4));
+        m_vertex_array.bindAttribute(0 /*attrib index*/, 0 /*buffer index*/);
+        m_vertex_array.setAttribFormat(0 /*attrib index*/, GL::VertexArrayHandle::AttribSize::_3,
+                                       GL::VertexArrayHandle::AttribType::_float, false, 0);
+        m_vertex_array.enableAttribute(0);
+    }
+
+    void collectDrawCommands(const CommandCollector &collector) const override
+    {
+        collector.emplace(simple::DrawArraysCommand(simple::DrawMode::points, 0, m_result.getElementArrayLength()),
+                          m_vertex_array);
+    }
+
+private:
+    GL::VertexArray m_vertex_array;
+    placement::Result m_result;
+};
+
 int main()
 {
     GLFW::InitGuard glfw_init_guard;
@@ -23,41 +48,27 @@ int main()
     GLuint heightmap = loadTexture("assets/black.png");
 
     placement::PlacementPipeline pipeline;
-    pipeline.setDensityTexture(densitymap);
-    pipeline.setHeightTexture(heightmap);
-    pipeline.setWorldScale({1.f, 1.f, -1.f});
     pipeline.setRandomSeed(89581751);
 
-    pipeline.computePlacement(0.001f, glm::vec2(0.0f), glm::vec2(1.0f));
+    const placement::WorldData world_data {/*scale=*/{1.f, 1.f, -1.f}, heightmap};
+    const placement::LayerData layer_data {/*footprint=*/0.001f, /*densitymaps=*/{{/*texture=*/densitymap}}};
 
-    // copy results between gpu buffers
-    using namespace GL;
-
-    BufferHandle buffer = BufferHandle::create();
-    buffer.allocate(pipeline.getResultsSize() * sizeof(glm::vec4), BufferHandle::Usage::dynamic_draw);
-
-    pipeline.copyResultsToGPUBuffer(buffer.getName());
-
-    VertexArrayHandle vertex_array = VertexArrayHandle::create();
-    vertex_array.bindVertexBuffer(0, buffer, 0, sizeof(glm::vec4));
-    vertex_array.bindAttribute(0 /*attrib index*/, 0 /*buffer index*/);
-    vertex_array.setAttribFormat(0 /*attrib index*/, VertexArrayHandle::AttribSize::_3, VertexArrayHandle::AttribType::_float, false, 0);
-    vertex_array.enableAttribute(0);
+    auto future_results = pipeline.computePlacement(world_data, layer_data, glm::vec2(0.0f), glm::vec2(1.0f));
 
     // rendering
     simple::Renderer renderer;
 
     simple::Camera camera;
 
-    simple::ShaderProgram program ("void main() {gl_Position = vec4(vertex_position.xzy * vec3(2.f, 2.f, 1.f) - vec3(1.f, 1.f, 0.f), 1.0f);}",
+    simple::ShaderProgram program ("void main() {gl_Position = vec4(vertex_position * vec3(2.f, 2.f, 1.f) - vec3(1.f, 1.f, 0.f), 1.0f);}",
                                    "void main() {frag_color = vec4(1.0f);}");
 
-    simple::Mesh point_mesh (Buffer(buffer), VertexArray(vertex_array), simple::DrawMode::points,
-                             pipeline.getResultsSize(), 0);
+    // render directly from the result buffer
+    ResultMesh mesh (future_results.readResult());
 
     while (!glfwWindowShouldClose(window.get()))
     {
-        renderer.draw(point_mesh, program, glm::mat4(1.0f));
+        renderer.draw(mesh, program, glm::mat4(1.0f));
 
         renderer.finishFrame(camera);
 
