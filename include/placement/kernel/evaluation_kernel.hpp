@@ -16,7 +16,7 @@ public:
     EvaluationKernel();
 
     void operator()(glm::uvec2 num_work_groups, uint class_index, glm::vec2 lower_bound, glm::vec2 upper_bound,
-                    GLuint density_map_texture_unit, GLuint candidate_buffer_binding_index,
+                    GLuint density_map_texture_unit, float density_map_scale, GLuint candidate_buffer_binding_index,
                     GLuint world_uv_buffer_binding_index, GLuint density_buffer_binding_index);
 
     template<typename ArrayLike>
@@ -48,6 +48,7 @@ private:
     CS::TypedUniform <glm::vec2> m_lower_bound;
     CS::TypedUniform <glm::vec2> m_upper_bound;
     CS::TypedUniform<float[work_group_size.x][work_group_size.y]> m_dithering_matrix;
+    CS::TypedUniform<float> m_density_map_scale;
     CS::CachedUniform<int> m_density_map;
     CS::ShaderStorageBlock m_candidate_buffer;
     CS::ShaderStorageBlock m_world_uv_buffer;

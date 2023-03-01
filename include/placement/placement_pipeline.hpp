@@ -18,6 +18,8 @@
 
 namespace placement {
 
+// TODO: implement offset, min_value, max_value
+
 /// A density map specifies the probability distribution of a single class of object over the landscape.
 struct DensityMap
 {

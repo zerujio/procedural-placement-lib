@@ -17,131 +17,245 @@
 #include <vector>
 #include <iostream>
 #include <chrono>
+#include <filesystem>
 
-class SimpleInstancedMesh : public simple::Drawable
+void drawDensityMapUI(placement::DensityMap &density_map,
+                      const std::vector<std::pair<std::string, GLuint>> &available_textures)
+{
+    auto current_texture = std::find_if(available_textures.begin(), available_textures.end(),
+                                        [&](const std::pair<std::string, GLuint> &pair)
+                                        { return pair.second == density_map.texture; });
+
+    ImGui::Text("Density map texture:");
+    ImGui::PushItemWidth(ImGui::GetWindowWidth() * .7f);
+    if (ImGui::BeginCombo("", current_texture->first.c_str()))
+    {
+        for (const auto &[filename, gl_object]: available_textures)
+        {
+            ImGui::PushID(filename.c_str());
+            if (ImGui::Selectable(filename.c_str()))
+                density_map.texture = gl_object;
+            ImGui::PopID();
+        }
+
+        ImGui::EndCombo();
+    }
+    ImGui::PopItemWidth();
+
+    ImGui::PushItemWidth(45);
+    ImGui::InputFloat("Scale", &density_map.scale);
+    ImGui::InputFloat("Offset", &density_map.offset);
+    ImGui::InputFloat("Min. value", &density_map.min_value);
+    ImGui::InputFloat("Max. value", &density_map.max_value);
+    ImGui::PopItemWidth();
+}
+
+std::vector<std::pair<std::string, GLuint>> loadTexturesFromDirectory(const std::string &directory)
+{
+    std::vector<std::pair<std::string, GLuint>> textures;
+
+    for (const auto &entry: std::filesystem::directory_iterator(directory))
+    {
+        if (!entry.is_regular_file()) continue;
+
+        try
+        { textures.emplace_back(entry.path().filename(), loadTexture(entry.path().c_str())); }
+
+        catch (std::exception &e)
+        { std::cout << "couldn't load " << entry.path() << ": " << e.what() << "\n"; }
+    }
+
+    return textures;
+}
+
+class PlacementBounds
 {
 public:
-    SimpleInstancedMesh(const std::vector<glm::vec3>& vertices, const std::vector<unsigned int>& indices = {});
+    PlacementBounds(glm::vec2 lower, glm::vec2 upper) : m_lower(lower), m_upper(upper), m_transform(m_makeTransform())
+    {}
 
-    ///
-    void updateInstanceData(GL::BufferHandle buffer, GLintptr offset, std::uint32_t instance_count);
+    [[nodiscard]] glm::vec2 getLower() const
+    { return m_lower; }
 
-    void collectDrawCommands(const CommandCollector &collector) const override;
+    [[nodiscard]] glm::vec2 getUpper() const
+    { return m_upper; }
 
-    [[nodiscard]] simple::DrawMode getDrawMode() const {return m_draw_mode;}
-    void setDrawMode(simple::DrawMode draw_mode) {m_draw_mode = draw_mode;}
+    [[nodiscard]] glm::vec2 getMaxUpper() const
+    { return m_max_upper; }
 
-    /// Vertex attribute index for instanced data.
-    static constexpr unsigned int instance_attr_location = 3; // position is location 0, normal are 1, uvs are 2
+    void setLower(glm::vec2 lower)
+    {
+        m_lower = glm::clamp(lower, {0, 0}, m_upper);
+        m_updateTransform();
+    }
+
+    void setUpper(glm::vec2 upper)
+    {
+        m_upper = glm::min(upper, m_max_upper);
+        m_lower = glm::min(m_lower, m_upper);
+        m_updateTransform();
+    }
+
+    void setMaxUpper(glm::vec2 max_upper)
+    {
+        m_max_upper = max_upper;
+        m_upper = glm::min(m_upper, m_max_upper);
+        m_lower = glm::min(m_lower, m_upper);
+        m_updateTransform();
+    }
+
+    void setPosition(glm::vec3 new_position)
+    {
+        m_position = new_position;
+        m_updateTransform();
+    }
+
+    [[nodiscard]] const glm::mat4 &getTransform() const
+    { return m_transform; }
 
 private:
-    static constexpr unsigned int s_main_buffer_binding = 0;
-    static constexpr unsigned int s_instance_buffer_binding = s_main_buffer_binding + 1;
+    glm::mat4 m_makeTransform()
+    {
+        return glm::scale(glm::translate(glm::mat4(1), glm::vec3(m_lower, 0) + m_position),
+                          glm::vec3(m_upper - m_lower, 1));
+    }
 
-    GL::Buffer m_main_buffer;
-    GL::Buffer m_instance_buffer;
-    GL::VertexArray m_vertex_array;
-    std::uint32_t m_vertex_count;
-    std::uint32_t m_index_count;
-    std::uint32_t m_instance_count;
-    simple::DrawMode m_draw_mode = simple::DrawMode::triangles;
+    void m_updateTransform()
+    {
+        m_transform = m_makeTransform();
+    }
+
+    glm::vec2 m_lower;
+    glm::vec2 m_upper;
+    glm::vec2 m_max_upper{m_upper};
+    glm::vec3 m_position{};
+    glm::mat4 m_transform;
 };
+
+constexpr glm::vec2 initial_window_size{1024, 768};
 
 int main()
 {
     GLFW::InitGuard glfw;
 
     glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
-    GLFW::Window window {"03 - Interactive placement"};
+    GLFW::Window window{"03 - Interactive placement", initial_window_size};
 
     GL::enableDebugCallback();
 
+    const auto density_textures = loadTexturesFromDirectory("assets/densitymaps");
+    const auto heightmap_texture_filename = "assets/heightmap.png";
+
     // compute positions
     placement::PlacementPipeline pipeline;
-    placement::WorldData world_data{/* scale= */ {100.0f, 10.0f, 100.0f},
-                                    /* heightmap= */ loadTexture("assets/heightmap.png")};
-    placement::LayerData layer_data{/* footprint= */ std::sqrt(2.0f) * 0.1f,
-                                    /* densitymaps= */{{loadTexture("assets/densitymaps/square_gradient.png")}}};
+    placement::WorldData world_data{/* scale= */ {100.0f, 100.0f, 10.0f},
+            /* heightmap= */ loadTexture(heightmap_texture_filename)};
+    placement::LayerData layer_data{/* footprint= */ 0.1f,
+            /* densitymaps= */{{density_textures[0].second, 0.33f},
+                               {density_textures[1].second, .33f},
+                               {density_textures[2].second, .33f}}};
 
-    glm::vec2 lower_bound {0.0f, 0.0f};
-    glm::vec2 upper_bound {100.0f, 100.0f};
+    PlacementBounds placement_bounds{{0, 0}, world_data.scale};
+    placement_bounds.setPosition({0, 0, world_data.scale.z / 2.f});
 
-    auto future_result = pipeline.computePlacement(world_data, layer_data, lower_bound, upper_bound);
+    auto future_result = pipeline.computePlacement(world_data, layer_data, placement_bounds.getLower(),
+                                                   placement_bounds.getUpper());
+    float future_result_footprint = layer_data.footprint;
+    bool waiting_for_results = false;
 
     // draw
     simple::Renderer renderer;
 
     simple::Camera camera;
-    const float camera_fov = glm::pi<float>() / 2.f;
-    const float camera_near = 0.01f;
-    const float camera_far = 1000.f;
 
-    camera.setProjectionMatrix(glm::perspectiveFov(camera_fov, 600.0f, 600.0f, camera_near, camera_far));
-    window.setFramebufferSizeCallback(
-            [&camera, camera_far, camera_near, camera_fov](GLFW::Window&, int x_size, int y_size)
-            {
-                camera.setProjectionMatrix(glm::perspectiveFov(camera_fov,
-                                                               float(x_size), float(y_size),
-                                                               camera_near, camera_far));
-            });
+    struct
+    {
+        float fov_y = glm::pi<float>() / 2.f;
+        float near_plane = 0.01f;
+        float far_plane = 1000.f;
+        float aspect_ratio = initial_window_size.x / initial_window_size.y;
+    } camera_projection;
 
-    CameraController camera_controller {camera, window};
+    const auto update_camera_projection = [&]()
+    {
+        camera.setProjectionMatrix(glm::perspective(camera_projection.fov_y, camera_projection.aspect_ratio,
+                                                    camera_projection.near_plane, camera_projection.far_plane));
+    };
+
+    update_camera_projection();
+    window.setFramebufferSizeCallback([&](GLFW::Window &, int x_size, int y_size)
+                                      {
+                                          camera_projection.aspect_ratio = float(x_size) / float(y_size);
+                                          update_camera_projection();
+                                      });
+
+    CameraController camera_controller{camera, window};
     camera_controller.setMaxRadius(100.0f);
     camera_controller.setRadius(25.0f);
     camera_controller.setAngle({glm::pi<float>() * 5. / 4., glm::pi<float>() / 3.0f});
     camera_controller.setMaxPosition({100.f, 100.f});
 
+    simple::ShaderProgram simple_program
+            {
+                    "void main() { gl_Position = proj_matrix * view_matrix * model_matrix * vec4(vertex_position, 1.0f); }",
+                    "void main() { frag_color = vec4(1.0f); }"
+            };
+
     simple::ShaderProgram program
-    {
-R"gl(
+            {
+                    R"gl(
 layout(location = 3) in vec3 instance_offset;
+layout(location = 4) in uint layer_index;
+
+out vec3 layer_color;
+
+const vec3 layer_colors[3] = {vec3(1, 0, 0), vec3(0, 1, 0), vec3(0, 0, 1)};
 
 void main()
 {
     const vec4 local_position = model_matrix * vec4(vertex_position, 1.f);
     gl_Position = proj_matrix * view_matrix * (local_position + vec4(instance_offset, 0.0f));
+    layer_color = layer_colors[layer_index];
 }
 )gl",
-R"gl(
-void main() {frag_color = vec4(1.0f);}
+                    R"gl(
+in vec3 layer_color;
+void main() {frag_color = vec4(layer_color, 1.0f);}
 )gl"};
 
     // meshes
     const auto [axes_mesh, axes_program] = makeAxes();
 
-    simple::Mesh square_mesh (std::array<glm::vec3, 4>{glm::vec3(0), {0, 0, 1}, {1, 0, 1}, {1, 0, 0}},
-                              std::array<glm::vec3, 4>{glm::vec3{1, .5, 0}, {1, .5, 0}, {1, .5, 0}, {1, .5, 0}},
-                              {});
+    simple::Mesh square_mesh(std::array<glm::vec3, 4>{glm::vec3(0), {0, 1, 0}, {1, 1, 0}, {1, 0, 0}},
+                             std::array<glm::vec3, 4>{glm::vec3{1, .5, 0}, {1, .5, 0}, {1, .5, 0}, {1, .5, 0}},
+                             {});
     square_mesh.setDrawMode(simple::DrawMode::line_loop);
 
-    SimpleInstancedMesh instanced_mesh {generateCirclePositions(12)};
+    SimpleInstancedMesh instanced_mesh{generateCirclePositions(12)};
     instanced_mesh.setDrawMode(simple::DrawMode::line_loop);
-    instanced_mesh.updateInstanceData(pipeline); // generated positions are copied to the instance position buffer
+    instanced_mesh.updateInstanceData(
+            future_result.readResult()); // generated positions are copied to the instance position buffer
 
-    simple::Mesh cube_lines {
-        std::array<glm::vec3, 8>
-                {glm::vec3{0, 0, 0}, {0, 0, 1}, {1, 0, 1}, {1, 0, 0}, {0, 1, 0}, {0, 1, 1}, {1, 1, 1}, {1, 1, 0}},
-        {},
-        {},
-        std::array<uint, 24>
-        {0, 1,  0, 3,  0, 4,
-         2, 1,  2, 3,  2, 6,
-         5, 1,  5, 4,  5, 6,
-         7, 3,  7, 4,  7, 6}
+    simple::Mesh cube_lines{
+            std::array<glm::vec3, 8>
+                    {glm::vec3{0, 0, 0}, {0, 0, 1}, {1, 0, 1}, {1, 0, 0}, {0, 1, 0}, {0, 1, 1}, {1, 1, 1}, {1, 1, 0}},
+            {},
+            {},
+            std::array<uint, 24>
+                    {0, 1, 0, 3, 0, 4,
+                     2, 1, 2, 3, 2, 6,
+                     5, 1, 5, 4, 5, 6,
+                     7, 3, 7, 4, 7, 6}
     };
     cube_lines.setDrawMode(simple::DrawMode::lines);
 
     // transformation matrices
-    const glm::mat4 identity_matrix {1.0f};
-    glm::mat4 world_scale_transform = glm::scale(identity_matrix, pipeline.getWorldScale());
-    glm::mat4 position_marker_transform = glm::scale(identity_matrix, glm::vec3(footprint));
-    glm::vec2 placement_bounds {upper_bound - lower_bound};
-    glm::mat4 placement_bounds_transform = glm::translate(glm::scale(identity_matrix,
-                                                                     glm::vec3(placement_bounds.x, 1, placement_bounds.y)),
-                                                          glm::vec3(lower_bound.x, 0, lower_bound.y));
+    const glm::mat4 identity_matrix{1.0f};
+    glm::mat4 world_scale_transform = glm::scale(identity_matrix, world_data.scale);
+    glm::mat4 position_marker_transform = glm::scale(identity_matrix, glm::vec3(layer_data.footprint / 2.0f));
 
     ImGuiContextWrapper imgui_context;
-    ImGuiImplWrapper imgui_impl {window.get(), true};
+    ImGuiImplWrapper imgui_impl{window.get(), true};
 
     auto prev_time = std::chrono::steady_clock::now();
     while (!glfwWindowShouldClose(window.get()))
@@ -155,47 +269,93 @@ void main() {frag_color = vec4(1.0f);}
         std::chrono::duration<float> delta_time = curr_time - prev_time;
         prev_time = curr_time;
 
-        ImGui::Begin("Settings");
-        ImGui::Text("Frame time: %fs", delta_time.count());
-
-        ImGui::Separator();
-
-        glm::vec3 world_scale = pipeline.getWorldScale();
-        if (ImGui::DragFloat3("World scale", glm::value_ptr(world_scale), 1.0f, 0.001, 1000))
+        // check for pending results
+        if (waiting_for_results && future_result.isReady())
         {
-            pipeline.setWorldScale(world_scale);
-            world_scale_transform = glm::scale(identity_matrix, world_scale);
-            camera_controller.setMaxPosition({world_scale.x, world_scale.z});
+            auto result = future_result.readResult();
+            instanced_mesh.updateInstanceData(result);
+
+            for (int i = 0; i < result.getNumClasses(); i++)
+                std::cout << "Element count for layer " << i << ": " << result.getClassElementCount(i) << "\n";
+            std::cout << "\n";
+
+            position_marker_transform = glm::scale(identity_matrix, glm::vec3(future_result_footprint / 2.0f));
+            waiting_for_results = false;
         }
 
-        ImGui::DragFloat("Footprint", &footprint, .01f, 0.0001, glm::max(world_scale.x, world_scale.y));
+        // draw UI
 
-        if (ImGui::DragFloat2("Lower bound", glm::value_ptr(lower_bound))
-            || ImGui::DragFloat2("Upper bound", glm::value_ptr(upper_bound)))
+        if (ImGui::Begin("Settings"))
         {
-            upper_bound = glm::clamp(upper_bound, lower_bound, {world_scale.x, world_scale.y});
-            lower_bound = glm::clamp(lower_bound, {0, 0}, upper_bound);
-            placement_bounds = upper_bound - lower_bound;
-            placement_bounds_transform = glm::scale(glm::translate(identity_matrix, {lower_bound.x, 0, lower_bound.y}),
-                                                    {placement_bounds.x, 1, placement_bounds.y});
-        }
-        renderer.draw(square_mesh, axes_program, placement_bounds_transform);
+            ImGui::Text("Frame time: %f s.\nFrame rate: %f FPS", delta_time.count(), 1.f / delta_time.count());
 
-        // positions can be re-calculated at runtime
-        if (ImGui::Button("Compute placement"))
-        {
-            pipeline.computePlacement(footprint, lower_bound, upper_bound);
-            instanced_mesh.updateInstanceData(pipeline);
-            position_marker_transform = glm::scale(identity_matrix, glm::vec3(footprint));
-        }
+            ImGui::Separator();
 
+            // World Data
+            ImGui::Text("World Data");
+            if (ImGui::DragFloat3("World scale", glm::value_ptr(world_data.scale), 1.0f, 0.001, 1000))
+            {
+                world_scale_transform = glm::scale(identity_matrix, world_data.scale);
+                camera_controller.setMaxPosition({world_data.scale.x, world_data.scale.y});
+                layer_data.footprint = glm::min(layer_data.footprint, glm::min(world_data.scale.x, world_data.scale.y));
+                placement_bounds.setMaxUpper(world_data.scale);
+                placement_bounds.setPosition({0, 0, world_data.scale.z});
+            }
+            ImGui::Text("Heightmap: %s", heightmap_texture_filename);
+
+            ImGui::Separator();
+
+            // Layer Data
+            ImGui::Text("Layer Data");
+            ImGui::DragFloat("Footprint", &layer_data.footprint);
+
+            if (ImGui::BeginListBox("Layers", {0.f, ImGui::GetContentRegionAvail().y -
+                                                    ImGui::GetTextLineHeightWithSpacing() * 1.5f}))
+            {
+                for (std::size_t i = 0; i < layer_data.densitymaps.size(); i++)
+                {
+                    ImGui::PushID(i);
+                    ImGui::Text("[%ld]:", i);
+                    ImGui::Indent();
+                    drawDensityMapUI(layer_data.densitymaps[i], density_textures);
+                    ImGui::Unindent();
+                    ImGui::PopID();
+                }
+                ImGui::EndListBox();
+            }
+
+            ImGui::Separator();
+
+            // Placement
+
+            {
+                glm::vec2 lower_bound = placement_bounds.getLower();
+                if (ImGui::DragFloat2("Lower bound", glm::value_ptr(lower_bound)))
+                    placement_bounds.setLower(lower_bound);
+            }
+
+            {
+                glm::vec2 upper_bound = placement_bounds.getUpper();
+                if (ImGui::DragFloat2("Upper bound", glm::value_ptr(upper_bound)))
+                    placement_bounds.setUpper(upper_bound);
+            }
+
+            if (ImGui::Button("Compute placement"))
+            {
+                future_result = pipeline.computePlacement(world_data, layer_data, placement_bounds.getLower(),
+                                                          placement_bounds.getUpper());
+                future_result_footprint = layer_data.footprint;
+                waiting_for_results = true;
+            }
+        }
         ImGui::End();
 
         camera_controller.update(delta_time.count());
 
+        renderer.draw(square_mesh, axes_program, placement_bounds.getTransform());
         renderer.draw(instanced_mesh, program, position_marker_transform);
         renderer.draw(axes_mesh, axes_program, world_scale_transform);
-        renderer.draw(cube_lines, program, world_scale_transform);
+        renderer.draw(cube_lines, simple_program, world_scale_transform);
 
         renderer.finishFrame(camera);
 
@@ -208,71 +368,3 @@ void main() {frag_color = vec4(1.0f);}
 
 // SimpleInstancedMesh
 
-SimpleInstancedMesh::SimpleInstancedMesh(const std::vector<glm::vec3> &vertices,
-                                         const std::vector<unsigned int> &indices) :
-        m_vertex_count(vertices.size()),
-        m_index_count(indices.size()),
-        m_instance_count(0)
-{
-    if (vertices.empty())
-        throw std::runtime_error("vertices can't be empty");
-
-    {
-        const std::size_t vertex_data_size = vertices.size() * sizeof(glm::vec3);
-        const std::size_t index_data_size = indices.size() * sizeof(unsigned int);
-
-        std::byte init_data[vertex_data_size + index_data_size];
-        std::memcpy(init_data, vertices.data(), vertex_data_size);
-        std::memcpy(init_data + vertex_data_size, indices.data(), index_data_size);
-
-        m_main_buffer.allocateImmutable(vertex_data_size + index_data_size, GL::BufferHandle::StorageFlags::none,
-                                         init_data);
-    }
-
-    m_vertex_array.bindVertexBuffer(s_main_buffer_binding, m_main_buffer, 0, sizeof(glm::vec3));
-
-    const auto position_location = simple::vertex_position_def.layout.location;
-    m_vertex_array.bindAttribute(position_location, s_main_buffer_binding);
-    m_vertex_array.setAttribFormat(position_location,
-                                    GL::VertexArrayHandle::AttribSize::_3,
-                                    GL::VertexArrayHandle::AttribType::_float,
-                                    false, 0);
-    m_vertex_array.enableAttribute(position_location);
-
-    if (!indices.empty())
-        m_vertex_array.bindElementBuffer(m_main_buffer);
-
-    m_vertex_array.bindVertexBuffer(s_instance_buffer_binding, m_instance_buffer, 0, sizeof(glm::vec4));
-    m_vertex_array.setBindingDivisor(s_instance_buffer_binding, 1);
-
-    m_vertex_array.bindAttribute(instance_attr_location, s_instance_buffer_binding);
-    m_vertex_array.setAttribFormat(instance_attr_location,
-                                    GL::VertexArrayHandle::AttribSize::_3,
-                                    GL::VertexArrayHandle::AttribType::_float,
-                                    false, 0);
-    m_vertex_array.enableAttribute(instance_attr_location);
-}
-
-void SimpleInstancedMesh::updateInstanceData(const placement::Result &result)
-{
-    constexpr GLsizeiptr instance_alignment = sizeof(glm::vec4);
-
-    m_instance_count = result.getElementArrayLength();
-    m_instance_buffer.allocate(m_instance_count * instance_alignment, GL::Buffer::Usage::static_draw);
-
-    result.copyAll(m_instance_buffer);
-}
-
-void SimpleInstancedMesh::collectDrawCommands(const simple::Drawable::CommandCollector &collector) const
-{
-    if (m_index_count)
-        collector.emplace(simple::DrawElementsInstancedCommand(m_draw_mode,
-                                                               m_index_count,
-                                                               simple::IndexType::unsigned_int,
-                                                               m_vertex_count * sizeof(glm::vec3),
-                                                               m_instance_count),
-                          m_vertex_array);
-    else
-        collector.emplace(simple::DrawArraysInstancedCommand(m_draw_mode, 0, m_vertex_count, m_instance_count),
-                          m_vertex_array);
-}

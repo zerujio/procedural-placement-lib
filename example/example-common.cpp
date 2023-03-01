@@ -1,3 +1,14 @@
+#include <chrono>
+#include <iostream>
+#include <vector>
+#include "imgui.h"
+#include "glutils/debug.hpp"
+#include "glutils/vertex_array.hpp"
+#include "glutils/buffer.hpp"
+#include "glutils/guard.hpp"
+#include "simple-renderer/glsl_definitions.hpp"
+#include "simple-renderer/renderer.hpp"
+#include "placement/placement.hpp"
 #include "example-common.hpp"
 
 #include "stb_image.h"
@@ -217,7 +228,83 @@ std::vector<glm::vec3> generateCirclePositions(unsigned int num_vertices)
     for (int i = 0; i < num_vertices; i++)
     {
         const float angle = static_cast<float>(i) * 2.f * glm::pi<float>() / static_cast<float>(num_vertices);
-        vertices.emplace_back(glm::cos(angle), 0.f, glm::sin(angle));
+        vertices.emplace_back(glm::cos(angle), glm::sin(angle), 0.f);
     }
     return vertices;
+}
+
+SimpleInstancedMesh::SimpleInstancedMesh(const std::vector<glm::vec3> &vertices,
+                                         const std::vector<unsigned int> &indices) :
+        m_vertex_count(vertices.size()),
+        m_index_count(indices.size()),
+        m_instance_count(0)
+{
+    if (vertices.empty())
+        throw std::runtime_error("vertices can't be empty");
+
+    {
+        const std::size_t vertex_data_size = vertices.size() * sizeof(glm::vec3);
+        const std::size_t index_data_size = indices.size() * sizeof(unsigned int);
+
+        std::byte init_data[vertex_data_size + index_data_size];
+        memcpy(init_data, vertices.data(), vertex_data_size);
+        memcpy(init_data + vertex_data_size, indices.data(), index_data_size);
+
+        m_main_buffer.allocateImmutable(vertex_data_size + index_data_size, GL::BufferHandle::StorageFlags::none,
+                                         init_data);
+    }
+
+    m_vertex_array.bindVertexBuffer(s_main_buffer_binding, m_main_buffer, 0, sizeof(glm::vec3));
+
+    const auto position_location = simple::vertex_position_def.layout.location;
+    m_vertex_array.bindAttribute(position_location, s_main_buffer_binding);
+    m_vertex_array.setAttribFormat(position_location,
+                                   GL::VertexAttributeLength::_3,
+                                   GL::VertexAttributeBaseType::_float,
+                                   false, 0);
+    m_vertex_array.enableAttribute(position_location);
+
+    if (!indices.empty())
+        m_vertex_array.bindElementBuffer(m_main_buffer);
+
+    m_vertex_array.bindVertexBuffer(s_instance_buffer_binding, m_instance_buffer, 0, sizeof(glm::vec4));
+    m_vertex_array.setBindingDivisor(s_instance_buffer_binding, 1);
+
+    m_vertex_array.bindAttribute(instance_attr_location, s_instance_buffer_binding);
+    m_vertex_array.setAttribFormat(instance_attr_location,
+                                   GL::VertexAttributeLength::_3,
+                                   GL::VertexAttributeBaseType::_float,
+                                   false, 0);
+    m_vertex_array.enableAttribute(instance_attr_location);
+
+    m_vertex_array.bindAttribute(instance_attr_location + 1, s_instance_buffer_binding);
+    m_vertex_array.setAttribIFormat(instance_attr_location + 1,
+                                    GL::VertexAttributeLength::_1,
+                                    GL::VertexAttributeBaseType::_uint,
+                                    sizeof(glm::vec3));
+    m_vertex_array.enableAttribute(instance_attr_location + 1);
+}
+
+void SimpleInstancedMesh::updateInstanceData(const placement::Result &result)
+{
+    constexpr GLsizeiptr instance_alignment = sizeof(glm::vec4);
+
+    m_instance_count = result.getElementArrayLength();
+    m_instance_buffer.allocate(m_instance_count * instance_alignment, GL::Buffer::Usage::static_draw);
+
+    result.copyAll(m_instance_buffer);
+}
+
+void SimpleInstancedMesh::collectDrawCommands(const CommandCollector &collector) const
+{
+    if (m_index_count)
+        collector.emplace(simple::DrawElementsInstancedCommand(m_draw_mode,
+                                                               m_index_count,
+                                                               simple::IndexType::unsigned_int,
+                                                               m_vertex_count * sizeof(glm::vec3),
+                                                               m_instance_count),
+                          m_vertex_array);
+    else
+        collector.emplace(simple::DrawArraysInstancedCommand(m_draw_mode, 0, m_vertex_count, m_instance_count),
+                          m_vertex_array);
 }

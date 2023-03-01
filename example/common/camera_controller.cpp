@@ -28,7 +28,13 @@ CameraController::CameraController(simple::Camera &camera, GLFW::Window& window)
             m_dragging = false;
     });
 
-    window.setScrollCallback([this](GLFW::Window&, double, double yoffset){ m_scroll_input += yoffset * m_radius; });
+    window.setScrollCallback([this](GLFW::Window&, double, double yoffset)
+    {
+        if (ImGui::GetIO().WantCaptureMouse)
+            return;
+
+        m_scroll_input += yoffset * m_radius;
+    });
 }
 
 void CameraController::update(float delta)
@@ -47,11 +53,11 @@ void CameraController::update(float delta)
     {
         const float distance = m_speed * delta * m_radius;
 
-        const vec2 forward {-cos(m_angle.x), -sin(m_angle.x)};
+        const vec2 forward {-sin(m_angle.x), -cos(m_angle.x)};
         m_position += float(forward_input) * forward * distance;
 
-        const vec3 side = cross(vec3(forward.x, 0, forward.y), vec3(0, 1, 0));
-        m_position += float(lateral_input) * vec2(side.x, side.z) * distance;
+        const vec2 side = cross(glm::vec3(forward, 0), vec3(0, 0, 1));
+        m_position += float(lateral_input) * side * distance;
 
         setPosition(m_position); // clamp and mark state dirty
     }
@@ -82,11 +88,11 @@ void CameraController::update(float delta)
 void CameraController::m_updateViewMatrix() const
 {
     const glm::vec3 spherical {
+            m_radius * glm::sin(m_angle.y) * glm::sin(m_angle.x),
             m_radius * glm::sin(m_angle.y) * glm::cos(m_angle.x),
-            m_radius * glm::cos(m_angle.y),
-            m_radius * glm::sin(m_angle.y) * glm::sin(m_angle.x)
+            m_radius * glm::cos(m_angle.y)
     };
 
-    const glm::vec3 plane_position {m_position.x, 0, m_position.y};
-    m_camera.setViewMatrix(glm::lookAt(plane_position + spherical, plane_position, {0.0f, 1.0f, 0.0f}));
+    const glm::vec3 plane_position {m_position, 0};
+    m_camera.setViewMatrix(glm::lookAt(plane_position + spherical, plane_position, {0.0f, 0.0f, 1.0f}));
 }

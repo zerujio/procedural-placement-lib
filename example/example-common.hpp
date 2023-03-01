@@ -9,8 +9,38 @@
 
 #include "simple-renderer/mesh.hpp"
 #include "simple-renderer/shader_program.hpp"
+#include "placement/placement_result.hpp"
 
 #include <utility>
+
+class SimpleInstancedMesh : public simple::Drawable
+{
+public:
+    explicit SimpleInstancedMesh(const std::vector<glm::vec3>& vertices, const std::vector<unsigned int>& indices = {});
+
+    ///
+    void updateInstanceData(const placement::Result& result);
+
+    void collectDrawCommands(const CommandCollector &collector) const override;
+
+    [[nodiscard]] simple::DrawMode getDrawMode() const {return m_draw_mode;}
+    void setDrawMode(simple::DrawMode draw_mode) {m_draw_mode = draw_mode;}
+
+    /// Vertex attribute index for instanced data.
+    static constexpr unsigned int instance_attr_location = 3; // position is location 0, normal are 1, uvs are 2
+
+private:
+    static constexpr unsigned int s_main_buffer_binding = 0;
+    static constexpr unsigned int s_instance_buffer_binding = s_main_buffer_binding + 1;
+
+    GL::Buffer m_main_buffer;
+    GL::Buffer m_instance_buffer;
+    GL::VertexArray m_vertex_array;
+    uint32_t m_vertex_count;
+    uint32_t m_index_count;
+    uint32_t m_instance_count;
+    simple::DrawMode m_draw_mode = simple::DrawMode::triangles;
+};
 
 /// loads a texture from a file and create an OpenGL texture object from it.
 GLuint loadTexture(const char* filename);

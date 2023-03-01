@@ -6,6 +6,7 @@ static constexpr auto source_string = R"gl(
 layout(local_size_x = 8, local_size_y = 8) in;
 
 uniform sampler2D u_density_map;
+uniform float u_density_map_scale;
 uniform uint u_class_index;
 uniform float u_dithering_matrix [gl_WorkGroupSize.x][gl_WorkGroupSize.y];
 uniform vec2 u_lower_bound;
@@ -40,9 +41,11 @@ void main()
 
     const vec2 world_uv = world_uv_array[array_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y];
 
-    const float threshold = u_dithering_matrix[gl_LocalInvocationID.x][gl_LocalInvocationID.y];
+    const uvec2 threshold_matrix_index = (gl_LocalInvocationID.xy + uvec2(world_uv * gl_WorkGroupSize.xy)) % gl_WorkGroupSize.xy;
+    const float threshold = u_dithering_matrix[threshold_matrix_index.x][threshold_matrix_index.y];
+
     const float density = density_array[array_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y]
-                        + texture(u_density_map, world_uv).x;
+                        + texture(u_density_map, world_uv).x * u_density_map_scale;
 
     density_array[array_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = density;
 
@@ -50,7 +53,9 @@ void main()
     const bool above_lower_bound = all(greaterThanEqual(position2d, u_lower_bound));
     const bool below_upper_bound = all(lessThan(position2d, u_upper_bound));
 
-    if (density > threshold && above_lower_bound && below_upper_bound)
+    const uint current_layer_index = candidate_array[array_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y].class_index;
+
+    if (u_class_index < current_layer_index && density > threshold && above_lower_bound && below_upper_bound)
         candidate_array[array_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y].class_index = u_class_index;
 }
 )gl";
@@ -63,6 +68,7 @@ EvaluationKernel::EvaluationKernel()
           m_lower_bound(m_program.getUniformLocation("u_lower_bound")),
           m_upper_bound(m_program.getUniformLocation("u_upper_bound")),
           m_dithering_matrix(m_program.getUniformLocation("u_dithering_matrix[0][0]")),
+          m_density_map_scale(m_program.getUniformLocation("u_density_map_scale")),
           m_density_map(m_program.getUniformLocation("u_density_map")),
           m_candidate_buffer(m_program.getShaderStorageBlockIndex("CandidateBuffer")),
           m_world_uv_buffer(m_program.getShaderStorageBlockIndex("WorldUVBuffer")),
@@ -99,13 +105,14 @@ const Matrix EvaluationKernel::default_dithering_matrix{makeDefaultDitheringMatr
 
 void
 EvaluationKernel::operator()(glm::uvec2 num_work_groups, uint class_index, glm::vec2 lower_bound, glm::vec2 upper_bound,
-                             GLuint density_map_texture_unit, GLuint candidate_buffer_binding_index,
+                             GLuint density_map_texture_unit, float density_map_scale, GLuint candidate_buffer_binding_index,
                              GLuint world_uv_buffer_binding_index, GLuint density_buffer_binding_index)
 {
     // uniforms
     m_program.setUniform(m_class_index, class_index);
     m_program.setUniform(m_lower_bound, lower_bound);
     m_program.setUniform(m_upper_bound, upper_bound);
+    m_program.setUniform(m_density_map_scale, density_map_scale);
 
     // textures
     m_program.setUniform(m_density_map, static_cast<GLint>(density_map_texture_unit));

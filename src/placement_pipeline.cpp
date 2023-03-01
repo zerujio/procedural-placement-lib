@@ -118,7 +118,9 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
     {
         gl.BindTextureUnit(m_base_tex_unit, layer_data.densitymaps[i].texture);
         m_evaluation_kernel(num_work_groups, i, lower_bound, upper_bound, m_base_tex_unit,
-                            m_getBindingIndex(candidate_buffer_index), m_getBindingIndex(world_uv_buffer_index),
+                            layer_data.densitymaps[i].scale,
+                            m_getBindingIndex(candidate_buffer_index),
+                            m_getBindingIndex(world_uv_buffer_index),
                             m_getBindingIndex(density_buffer_index));
         gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     }
