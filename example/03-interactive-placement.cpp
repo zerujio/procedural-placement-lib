@@ -13,22 +13,21 @@
 #include "glutils/debug.hpp"
 
 #include "imgui.h"
+#include "placement/density_map.hpp"
 
 #include <vector>
 #include <iostream>
 #include <chrono>
 #include <filesystem>
 
-void drawDensityMapUI(placement::DensityMap &density_map,
-                      const std::vector<std::pair<std::string, GLuint>> &available_textures)
+void updateDensityMapUI(placement::DensityMap &density_map,
+                        const std::map<std::string, GLuint> &available_textures)
 {
     auto current_texture = std::find_if(available_textures.begin(), available_textures.end(),
                                         [&](const std::pair<std::string, GLuint> &pair)
                                         { return pair.second == density_map.texture; });
 
-    ImGui::Text("Density map texture:");
-    ImGui::PushItemWidth(ImGui::GetWindowWidth() * .7f);
-    if (ImGui::BeginCombo("", current_texture->first.c_str()))
+    if (ImGui::BeginCombo("Texture", current_texture->first.c_str()))
     {
         for (const auto &[filename, gl_object]: available_textures)
         {
@@ -40,26 +39,49 @@ void drawDensityMapUI(placement::DensityMap &density_map,
 
         ImGui::EndCombo();
     }
-    ImGui::PopItemWidth();
 
     ImGui::PushItemWidth(45);
-    ImGui::InputFloat("Scale", &density_map.scale);
-    ImGui::InputFloat("Offset", &density_map.offset);
-    ImGui::InputFloat("Min. value", &density_map.min_value);
-    ImGui::InputFloat("Max. value", &density_map.max_value);
+    ImGui::DragFloat("Scale", &density_map.scale, .01);
+    ImGui::DragFloat("Offset", &density_map.offset, .01);
+    ImGui::DragFloat("Min. value", &density_map.min_value, .01);
+    ImGui::DragFloat("Max. value", &density_map.max_value, .01);
     ImGui::PopItemWidth();
 }
 
-std::vector<std::pair<std::string, GLuint>> loadTexturesFromDirectory(const std::string &directory)
+void updateLayerDataUI(placement::LayerData &layer_data,
+                       const std::map<std::string, GLuint> &available_textures)
 {
-    std::vector<std::pair<std::string, GLuint>> textures;
+    ImGui::Text("Layer Data");
+
+    ImGui::DragFloat("Footprint", &layer_data.footprint, 0.1f, 0.001f);
+
+    ImGui::BeginListBox("DensityMap(s)");
+    ImGui::Separator();
+    for (int i = 0; i < layer_data.densitymaps.size(); i++)
+    {
+        ImGui::PushID(i);
+        ImGui::Text("[%d]", i);
+        ImGui::SameLine();
+        if (ImGui::CollapsingHeader("DensityMap"))
+        {
+            updateDensityMapUI(layer_data.densitymaps[i], available_textures);
+            ImGui::Separator();
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndListBox();
+}
+
+std::map<std::string, GLuint> loadTexturesFromDirectory(const std::string &directory)
+{
+    std::map<std::string, GLuint> textures;
 
     for (const auto &entry: std::filesystem::directory_iterator(directory))
     {
         if (!entry.is_regular_file()) continue;
 
         try
-        { textures.emplace_back(entry.path().filename(), loadTexture(entry.path().c_str())); }
+        { textures.emplace(entry.path().filename(), loadTexture(entry.path().c_str())); }
 
         catch (std::exception &e)
         { std::cout << "couldn't load " << entry.path() << ": " << e.what() << "\n"; }
@@ -143,17 +165,20 @@ int main()
 
     GL::enableDebugCallback();
 
-    const auto density_textures = loadTexturesFromDirectory("assets/densitymaps");
-    const auto heightmap_texture_filename = "assets/heightmap.png";
+    const auto textures = loadTexturesFromDirectory("assets/textures");
+
+    const char* heightmap_filename = "heightmap.png";
 
     // compute positions
     placement::PlacementPipeline pipeline;
-    placement::WorldData world_data{/* scale= */ {100.0f, 100.0f, 10.0f},
-            /* heightmap= */ loadTexture(heightmap_texture_filename)};
-    placement::LayerData layer_data{/* footprint= */ 0.1f,
-            /* densitymaps= */{{density_textures[0].second, 0.33f},
-                               {density_textures[1].second, .33f},
-                               {density_textures[2].second, .33f}}};
+    placement::WorldData world_data{/*scale=*/ {100.0f, 100.0f, 10.0f},
+                                               /*heightmap=*/ textures.at(heightmap_filename)};
+
+    placement::LayerData layer_data{/*footprint=*/ 0.3f,
+            /*densitymaps=*/{{textures.at("linear_gradient.png"), 0.33f},
+                              {textures.at("bilinear_gradient.png"), .33f},
+                              {textures.at("radial_gradient.png"), .33f}}
+    };
 
     PlacementBounds placement_bounds{{0, 0}, world_data.scale};
     placement_bounds.setPosition({0, 0, world_data.scale.z / 2.f});
@@ -233,8 +258,7 @@ void main() {frag_color = vec4(layer_color, 1.0f);}
 
     SimpleInstancedMesh instanced_mesh{generateCirclePositions(12)};
     instanced_mesh.setDrawMode(simple::DrawMode::line_loop);
-    instanced_mesh.updateInstanceData(
-            future_result.readResult()); // generated positions are copied to the instance position buffer
+    instanced_mesh.updateInstanceData(future_result.readResult());
 
     simple::Mesh cube_lines{
             std::array<glm::vec3, 8>
@@ -297,37 +321,37 @@ void main() {frag_color = vec4(layer_color, 1.0f);}
             {
                 world_scale_transform = glm::scale(identity_matrix, world_data.scale);
                 camera_controller.setMaxPosition({world_data.scale.x, world_data.scale.y});
+
                 layer_data.footprint = glm::min(layer_data.footprint, glm::min(world_data.scale.x, world_data.scale.y));
-                placement_bounds.setMaxUpper(world_data.scale);
+
                 placement_bounds.setPosition({0, 0, world_data.scale.z});
+                placement_bounds.setMaxUpper(world_data.scale);
             }
-            ImGui::Text("Heightmap: %s", heightmap_texture_filename);
+
+            if (ImGui::BeginCombo("Heightmap", heightmap_filename))
+            {
+                for(const auto& [filename, gl_texture] : textures)
+                {
+                    const char* c_str = filename.c_str();
+                    ImGui::PushID(c_str);
+                    if (ImGui::Selectable(c_str))
+                    {
+                        heightmap_filename = c_str;
+                        world_data.heightmap = gl_texture;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndCombo();
+            }
 
             ImGui::Separator();
 
             // Layer Data
-            ImGui::Text("Layer Data");
-            ImGui::DragFloat("Footprint", &layer_data.footprint);
-
-            if (ImGui::BeginListBox("Layers", {0.f, ImGui::GetContentRegionAvail().y -
-                                                    ImGui::GetTextLineHeightWithSpacing() * 1.5f}))
-            {
-                for (std::size_t i = 0; i < layer_data.densitymaps.size(); i++)
-                {
-                    ImGui::PushID(i);
-                    ImGui::Text("[%ld]:", i);
-                    ImGui::Indent();
-                    drawDensityMapUI(layer_data.densitymaps[i], density_textures);
-                    ImGui::Unindent();
-                    ImGui::PopID();
-                }
-                ImGui::EndListBox();
-            }
+            updateLayerDataUI(layer_data, textures);
 
             ImGui::Separator();
 
             // Placement
-
             {
                 glm::vec2 lower_bound = placement_bounds.getLower();
                 if (ImGui::DragFloat2("Lower bound", glm::value_ptr(lower_bound)))

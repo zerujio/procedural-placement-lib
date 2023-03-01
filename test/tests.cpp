@@ -269,8 +269,8 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
 
     placement::PlacementPipeline pipeline;
 
-    placement::WorldData world_data{{10.f, 10.f, 1.f}, s_texture_loader["assets/black.png"]};
-    placement::LayerData layer_data{1.f, {{s_texture_loader["assets/white.png"]}}};
+    placement::WorldData world_data{{10.f, 10.f, 1.f}, s_texture_loader["assets/textures/black.png"]};
+    placement::LayerData layer_data{1.f, {{s_texture_loader["assets/textures/white.png"]}}};
 
     SECTION("Placement with zero area should return an empty vector")
     {
@@ -459,8 +459,8 @@ TEST_CASE("PlacementPipeline (multiclass)", "[pipeline][multiclass]")
     constexpr float footprint = 0.01f;
 
     PlacementPipeline pipeline;
-    WorldData world_data{{1.f, 1.f, 1.f}, s_texture_loader["assets/heightmap.png"]};
-    const GLuint white_texture = s_texture_loader["assets/white.png"];
+    WorldData world_data{{1.f, 1.f, 1.f}, s_texture_loader["assets/textures/heightmap.png"]};
+    const GLuint white_texture = s_texture_loader["assets/textures/white.png"];
     LayerData layer_data{footprint,
                          {{white_texture, .4f}, {white_texture, .3f}, {white_texture, .2f}, {white_texture, .1f}}};
 
@@ -596,7 +596,7 @@ TEST_CASE("GenerationKernel", "[generation][kernel]")
 
     constexpr glm::vec3 world_scale{1.0f};
 
-    const auto black_texture = s_texture_loader["assets/black.png"];
+    const auto black_texture = s_texture_loader["assets/textures/black.png"];
 
     const uint height_texture_unit = 0;
     gl.BindTextureUnit(height_texture_unit, black_texture);
@@ -789,10 +789,10 @@ TEST_CASE("EvaluationKernel", "[evaluation][kernel]")
     buffer.bindRange(GL::Buffer::IndexedTarget::shader_storage, density_binding_index, density_range);
 
     constexpr uint density_tex_unit = 0;
-    const GLuint density_texture = s_texture_loader["assets/white.png"];
+    const GLuint density_texture = s_texture_loader["assets/textures/white.png"];
     gl.BindTextureUnit(density_tex_unit, density_texture);
 
-    kernel(wg_count, /*class index*/ 0, lower_bound, upper_bound, density_tex_unit,
+    kernel(wg_count, {0, 0}, /*class index*/ 0, lower_bound, upper_bound, density_tex_unit, DensityMap(),
            candidate_binding_index, world_uv_binding_index, density_binding_index);
     gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 

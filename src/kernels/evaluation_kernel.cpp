@@ -1,4 +1,5 @@
 #include "placement/kernel/evaluation_kernel.hpp"
+#include "placement/density_map.hpp"
 
 static constexpr auto source_string = R"gl(
 #version 450 core
@@ -6,11 +7,12 @@ static constexpr auto source_string = R"gl(
 layout(local_size_x = 8, local_size_y = 8) in;
 
 uniform sampler2D u_density_map;
-uniform float u_density_map_scale;
+uniform vec4 u_density_map_params;
 uniform uint u_class_index;
 uniform float u_dithering_matrix [gl_WorkGroupSize.x][gl_WorkGroupSize.y];
 uniform vec2 u_lower_bound;
 uniform vec2 u_upper_bound;
+uniform uvec2 u_work_group_index_offset;
 
 struct Candidate {
     vec3 position;
@@ -35,17 +37,30 @@ buffer DensityBuffer
     float[gl_WorkGroupSize.x][gl_WorkGroupSize.y] density_array[];
 };
 
+float sampleDensityMap(vec2 world_uv)
+{
+    const float scale = u_density_map_params.x;
+    const float offset = u_density_map_params.y;
+    const float min_value = u_density_map_params.z;
+    const float max_value = u_density_map_params.w;
+
+    const float density = texture(u_density_map, world_uv).x;
+
+    return clamp(density * scale + offset, min_value, max_value);
+}
+
 void main()
 {
     const uint array_index = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
 
     const vec2 world_uv = world_uv_array[array_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y];
 
-    const uvec2 threshold_matrix_index = (gl_LocalInvocationID.xy + uvec2(world_uv * gl_WorkGroupSize.xy)) % gl_WorkGroupSize.xy;
+    const uvec2 threshold_matrix_index = (gl_LocalInvocationID.xy + u_work_group_index_offset + gl_WorkGroupID.xy)
+                                            % gl_WorkGroupSize.xy;
     const float threshold = u_dithering_matrix[threshold_matrix_index.x][threshold_matrix_index.y];
 
     const float density = density_array[array_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y]
-                        + texture(u_density_map, world_uv).x * u_density_map_scale;
+                        + sampleDensityMap(world_uv);
 
     density_array[array_index][gl_LocalInvocationID.x][gl_LocalInvocationID.y] = density;
 
@@ -67,8 +82,9 @@ EvaluationKernel::EvaluationKernel()
           m_class_index(m_program.getUniformLocation("u_class_index")),
           m_lower_bound(m_program.getUniformLocation("u_lower_bound")),
           m_upper_bound(m_program.getUniformLocation("u_upper_bound")),
+          m_work_group_index_offset(m_program.getUniformLocation("u_work_group_index_offset")),
           m_dithering_matrix(m_program.getUniformLocation("u_dithering_matrix[0][0]")),
-          m_density_map_scale(m_program.getUniformLocation("u_density_map_scale")),
+          m_density_map_params(m_program.getUniformLocation("u_density_map_params")),
           m_density_map(m_program.getUniformLocation("u_density_map")),
           m_candidate_buffer(m_program.getShaderStorageBlockIndex("CandidateBuffer")),
           m_world_uv_buffer(m_program.getShaderStorageBlockIndex("WorldUVBuffer")),
@@ -104,15 +120,19 @@ constexpr Matrix makeDefaultDitheringMatrix()
 const Matrix EvaluationKernel::default_dithering_matrix{makeDefaultDitheringMatrix()};
 
 void
-EvaluationKernel::operator()(glm::uvec2 num_work_groups, uint class_index, glm::vec2 lower_bound, glm::vec2 upper_bound,
-                             GLuint density_map_texture_unit, float density_map_scale, GLuint candidate_buffer_binding_index,
+EvaluationKernel::operator()(glm::uvec2 num_work_groups, glm::uvec2 work_group_index_offset, uint class_index,
+                             glm::vec2 lower_bound, glm::vec2 upper_bound,
+                             GLuint density_map_texture_unit, const DensityMap& density_map,
+                             GLuint candidate_buffer_binding_index,
                              GLuint world_uv_buffer_binding_index, GLuint density_buffer_binding_index)
 {
     // uniforms
     m_program.setUniform(m_class_index, class_index);
     m_program.setUniform(m_lower_bound, lower_bound);
     m_program.setUniform(m_upper_bound, upper_bound);
-    m_program.setUniform(m_density_map_scale, density_map_scale);
+    m_program.setUniform(m_density_map_params, {density_map.scale, density_map.offset,
+                                                density_map.min_value, density_map.max_value});
+    m_program.setUniform(m_work_group_index_offset, work_group_index_offset);
 
     // textures
     m_program.setUniform(m_density_map, static_cast<GLint>(density_map_texture_unit));

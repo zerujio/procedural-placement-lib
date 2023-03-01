@@ -43,7 +43,7 @@ int main()
     glm::ivec2 texture_size;
     {
         int channels;
-        std::uint8_t *texture_data = stbi_load("assets/heightmap.png", &texture_size.x, &texture_size.y, &channels, 0);
+        std::uint8_t *texture_data = stbi_load("assets/textures/heightmap.png", &texture_size.x, &texture_size.y, &channels, 0);
         if (!texture_data)
         {
             std::cerr << "texture load failed: " << stbi_failure_reason() << std::endl;
@@ -75,7 +75,7 @@ int main()
 
         // use same texture for height and density
         const placement::WorldData world_data {/*scale=*/{texture_size.x, 1.0f, texture_size.y}, /*heightmap=*/texture};
-        const placement::LayerData layer_data {/*footprint=*/5.0f, /*densitymaps=*/{{texture}}};
+        const placement::LayerData layer_data {/*footprint=*/5.0f, /*textures=*/{{texture}}};
 
         const glm::vec2 lower_bound{glm::vec2(texture_size.x, texture_size.y) / 2.0f};
         const glm::vec2 upper_bound{lower_bound + 100.0f};

@@ -44,14 +44,14 @@ int main()
     GLFW::Window window {"02 - Basic Visualization"};
 
     //placement
-    GLuint densitymap = loadTexture("assets/heightmap.png"); // deliberately using heightmap as densitymap
-    GLuint heightmap = loadTexture("assets/black.png");
+    GLuint densitymap = loadTexture("assets/textures/heightmap.png"); // deliberately using heightmap as densitymap
+    GLuint heightmap = loadTexture("assets/textures/black.png");
 
     placement::PlacementPipeline pipeline;
     pipeline.setRandomSeed(89581751);
 
     const placement::WorldData world_data {/*scale=*/{1.f, 1.f, -1.f}, heightmap};
-    const placement::LayerData layer_data {/*footprint=*/0.001f, /*densitymaps=*/{{/*texture=*/densitymap}}};
+    const placement::LayerData layer_data {/*footprint=*/0.001f, /*textures=*/{{/*texture=*/densitymap}}};
 
     auto future_results = pipeline.computePlacement(world_data, layer_data, glm::vec2(0.0f), glm::vec2(1.0f));
 

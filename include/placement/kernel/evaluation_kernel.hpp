@@ -7,6 +7,8 @@
 
 namespace placement {
 
+class DensityMap;
+
 class EvaluationKernel final
 {
 public:
@@ -15,9 +17,11 @@ public:
 
     EvaluationKernel();
 
-    void operator()(glm::uvec2 num_work_groups, uint class_index, glm::vec2 lower_bound, glm::vec2 upper_bound,
-                    GLuint density_map_texture_unit, float density_map_scale, GLuint candidate_buffer_binding_index,
-                    GLuint world_uv_buffer_binding_index, GLuint density_buffer_binding_index);
+    void operator()(glm::uvec2 num_work_groups, glm::uvec2 work_group_index_offset, uint class_index,
+                    glm::vec2 lower_bound, glm::vec2 upper_bound,
+                    GLuint density_map_texture_unit, const DensityMap& density_map,
+                    GLuint candidate_buffer_binding_index, GLuint world_uv_buffer_binding_index,
+                    GLuint density_buffer_binding_index);
 
     template<typename ArrayLike>
     void setDitheringMatrix(const ArrayLike &values)
@@ -44,11 +48,12 @@ private:
 
     using CS = ComputeShaderProgram;
 
-    CS::TypedUniform <uint> m_class_index;
-    CS::TypedUniform <glm::vec2> m_lower_bound;
-    CS::TypedUniform <glm::vec2> m_upper_bound;
+    CS::TypedUniform<uint> m_class_index;
+    CS::TypedUniform<glm::vec2> m_lower_bound;
+    CS::TypedUniform<glm::vec2> m_upper_bound;
+    CS::TypedUniform<glm::uvec2> m_work_group_index_offset;
     CS::TypedUniform<float[work_group_size.x][work_group_size.y]> m_dithering_matrix;
-    CS::TypedUniform<float> m_density_map_scale;
+    CS::TypedUniform<glm::vec4> m_density_map_params;
     CS::CachedUniform<int> m_density_map;
     CS::ShaderStorageBlock m_candidate_buffer;
     CS::ShaderStorageBlock m_world_uv_buffer;

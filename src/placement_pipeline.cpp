@@ -117,8 +117,8 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
     for (std::size_t i = 0; i < class_count; i++)
     {
         gl.BindTextureUnit(m_base_tex_unit, layer_data.densitymaps[i].texture);
-        m_evaluation_kernel(num_work_groups, i, lower_bound, upper_bound, m_base_tex_unit,
-                            layer_data.densitymaps[i].scale,
+        m_evaluation_kernel(num_work_groups, work_group_offset, i, lower_bound, upper_bound, m_base_tex_unit,
+                            layer_data.densitymaps[i],
                             m_getBindingIndex(candidate_buffer_index),
                             m_getBindingIndex(world_uv_buffer_index),
                             m_getBindingIndex(density_buffer_index));
