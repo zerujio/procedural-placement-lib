@@ -102,7 +102,7 @@ private:
 
     glm::vec2 m_angle {0.0f, glm::pi<float>() / 2.0f};
     glm::vec2 m_max_angle {std::numeric_limits<float>::max(), glm::pi<float>() / 2.0f};
-    glm::vec2 m_min_angle {std::numeric_limits<float>::min(), 0.01f};
+    glm::vec2 m_min_angle {std::numeric_limits<float>::lowest(), 0.01f};
     float m_angular_speed {glm::pi<float>() * 0.1f};
 
     float m_radius {1.0f};
