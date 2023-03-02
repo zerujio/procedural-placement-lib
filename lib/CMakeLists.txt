@@ -1,1 +1,2 @@
 add_subdirectory(simple-renderer)
+add_subdirectory(fast_obj)

@@ -1,3 +1,6 @@
 [submodule "lib/simple-renderer"]
 	path = lib/simple-renderer
 	url = git@github.com:zerujio/simple-renderer.git
+[submodule "lib/fast_obj"]
+	path = lib/fast_obj
+	url = https://github.com/thisistherk/fast_obj.git

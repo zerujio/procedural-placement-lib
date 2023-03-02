@@ -85,14 +85,16 @@ void CameraController::update(float delta)
     }
 }
 
-void CameraController::m_updateViewMatrix() const
+glm::vec3 CameraController::getCameraPosition() const
 {
-    const glm::vec3 spherical {
+    return  glm::vec3(m_position, 0) + glm::vec3{
             m_radius * glm::sin(m_angle.y) * glm::sin(m_angle.x),
             m_radius * glm::sin(m_angle.y) * glm::cos(m_angle.x),
             m_radius * glm::cos(m_angle.y)
     };
+}
 
-    const glm::vec3 plane_position {m_position, 0};
-    m_camera.setViewMatrix(glm::lookAt(plane_position + spherical, plane_position, {0.0f, 0.0f, 1.0f}));
+void CameraController::m_updateViewMatrix() const
+{
+    m_camera.setViewMatrix(glm::lookAt(getCameraPosition(), {m_position, 0}, {0.0f, 0.0f, 1.0f}));
 }

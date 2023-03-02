@@ -4,7 +4,8 @@ add_library(example-common STATIC
         example-common.cpp
         common/glfw_wrapper.cpp
         common/camera_controller.cpp
-        common/imgui_wrapper.cpp)
+        common/imgui_wrapper.cpp
+        common/load_obj.cpp)
 target_link_libraries(example-common
         PUBLIC
         procedural-placement-lib
@@ -12,6 +13,7 @@ target_link_libraries(example-common
         glutils
         glfw
         PRIVATE
+        fast_obj
         stb_image
         imgui)
 target_include_directories(example-common PUBLIC $<TARGET_PROPERTY:imgui,INTERFACE_INCLUDE_DIRECTORIES>)
@@ -24,6 +26,9 @@ target_link_libraries(02-basic-visualization example-common)
 
 add_executable(03-interactive-placement 03-interactive-placement.cpp)
 target_link_libraries(03-interactive-placement example-common)
+
+add_executable(04-scene 04-scene.cpp)
+target_link_libraries(04-scene example-common)
 
 add_custom_target(pplib-examples)
 add_dependencies(pplib-examples

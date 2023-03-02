@@ -72,24 +72,6 @@ void updateLayerDataUI(placement::LayerData &layer_data,
     ImGui::EndListBox();
 }
 
-std::map<std::string, GLuint> loadTexturesFromDirectory(const std::string &directory)
-{
-    std::map<std::string, GLuint> textures;
-
-    for (const auto &entry: std::filesystem::directory_iterator(directory))
-    {
-        if (!entry.is_regular_file()) continue;
-
-        try
-        { textures.emplace(entry.path().filename(), loadTexture(entry.path().c_str())); }
-
-        catch (std::exception &e)
-        { std::cout << "couldn't load " << entry.path() << ": " << e.what() << "\n"; }
-    }
-
-    return textures;
-}
-
 class PlacementBounds
 {
 public:

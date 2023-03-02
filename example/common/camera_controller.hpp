@@ -2,8 +2,9 @@
 #define PROCEDURALPLACEMENTLIB_CAMERA_CONTROLLER_HPP
 
 #include "glm/vec2.hpp"
-#include "glm/gtc/constants.hpp"
+#include "glm/vec3.hpp"
 #include "glm/common.hpp"
+#include "glm/gtc/constants.hpp"
 
 namespace simple { class Camera; }
 
@@ -16,6 +17,7 @@ public:
 
     void update(float delta);
 
+    [[nodiscard]] glm::vec3 getCameraPosition() const;
     [[nodiscard]] glm::vec2 getPosition() const { return m_position; }
     void setPosition(glm::vec2 position) { m_setClamped(m_position, position, m_min_position, m_max_position); }
 

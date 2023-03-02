@@ -10,18 +10,19 @@
 #include <memory>
 #include <functional>
 
-namespace GLFW
-{
+namespace GLFW {
 
 /// Wraps a GLFW error string in an exception.
 class Error final : public std::runtime_error
 {
 public:
-    Error() : std::runtime_error(s_getGlfwErrorString()) {}
+    Error() : std::runtime_error(s_getGlfwErrorString())
+    {}
+
 private:
-    static const char* s_getGlfwErrorString()
+    static const char *s_getGlfwErrorString()
     {
-        const char* str;
+        const char *str;
         glfwGetError(&str);
         return str;
     }
@@ -46,72 +47,62 @@ struct InitGuard final
 class Window final
 {
 public:
-    explicit Window(const char* title, glm::uvec2 initial_size = {600, 600});
+    explicit Window(const char *title, glm::uvec2 initial_size = {600, 600});
+    ~Window();
 
-    [[nodiscard]] GLFWwindow* get() const {return m_window.get();}
+    [[nodiscard]] GLFWwindow *get() const
+    { return m_window.get(); }
 
     // mouse scroll input
-    using ScrollCallback = std::function<void(Window&, double, double)>;
+    using ScrollCallback = std::function<void(Window &, double, double)>;
 
-    [[nodiscard]] const ScrollCallback &getScrollCallback() const { return m_scroll_callback; }
+    [[nodiscard]] const ScrollCallback &getScrollCallback() const
+    { return m_scroll_callback.first; }
 
     template<typename Function>
-    void setScrollCallback(Function&& function)
-    {
-        m_setCallback<&Window::m_scroll_callback>(glfwSetScrollCallback, std::forward<Function>(function));
-    }
+    void setScrollCallback(Function &&function)
+    { m_scroll_callback.first = std::forward<Function>(function); }
 
     // mouse button input
-    using MouseButtonCallback = std::function<void(Window&, int, int, int)>;
+    using MouseButtonCallback = std::function<void(Window &, int, int, int)>;
 
-    [[nodiscard]] const MouseButtonCallback& getMouseButtonCallback() const { return m_mouse_button_callback; }
+    [[nodiscard]] const MouseButtonCallback &getMouseButtonCallback() const
+    { return m_mouse_button_callback.first; }
 
     template<typename Function>
-    void setMouseButtonCallback(Function&& function)
-    {
-        m_setCallback<&Window::m_mouse_button_callback>(glfwSetMouseButtonCallback, std::forward<Function>(function));
-    }
+    void setMouseButtonCallback(Function &&function)
+    { m_mouse_button_callback.first = std::forward<Function>(function); }
 
     // framebuffer resize
-    using FramebufferSizeCallback = std::function<void(Window&, int, int)>;
+    using FramebufferSizeCallback = std::function<void(Window &, int, int)>;
 
-    [[nodiscard]] const FramebufferSizeCallback& getFramebufferSizeCallback() const {return m_framebuffer_size_callback;}
+    [[nodiscard]] const FramebufferSizeCallback &getFramebufferSizeCallback() const
+    { return m_framebuffer_size_callback.first; }
 
     template<typename Function>
-    void setFramebufferSizeCallback(Function&& function)
-    {
-        m_setCallback<&Window::m_framebuffer_size_callback>(glfwSetFramebufferSizeCallback,
-                                                            std::forward<Function>(function));
-    }
+    void setFramebufferSizeCallback(Function &&function)
+    { m_framebuffer_size_callback.first = std::forward<Function>(function); }
 
 private:
-    struct DestroyWindow { void operator()(GLFWwindow* window) { glfwDestroyWindow(window);} };
+    struct DestroyWindow
+    {
+        void operator()(GLFWwindow *window)
+        { glfwDestroyWindow(window); }
+    };
 
     template<typename ... Args>
-    using glfwCallbackType = void (*)(GLFWwindow*, Args...);
+    using glfwCallbackType = void (*)(GLFWwindow *, Args...);
 
     template<typename ... Args>
-    using glfwSetCallbackType = glfwCallbackType<Args...> (*) (GLFWwindow*, glfwCallbackType<Args...>);
+    using glfwSetCallbackType = glfwCallbackType<Args...> (*)(GLFWwindow *, glfwCallbackType<Args...>);
 
     template<auto CallbackPtr, typename ... Args>
-    static void s_invoke(GLFWwindow* glfw_window, Args... args)
-    {
-        auto window = static_cast<Window*>(glfwGetWindowUserPointer(glfw_window));
-        (window->*CallbackPtr)(*window, args...);
-    }
-
-    template<auto Callback, typename Function, typename ... Args>
-    void m_setCallback(glfwSetCallbackType<Args...> glfw_set_callback, Function&& function)
-    {
-        auto& callback = this->*Callback;
-        callback = function;
-        glfw_set_callback(get(), callback ? s_invoke<Callback, Args...> : nullptr);
-    }
+    static void s_invoke(GLFWwindow *glfw_window, Args... args);
 
     std::unique_ptr<GLFWwindow, DestroyWindow> m_window;
-    ScrollCallback m_scroll_callback;
-    MouseButtonCallback m_mouse_button_callback;
-    FramebufferSizeCallback m_framebuffer_size_callback;
+    std::pair<ScrollCallback, glfwCallbackType<double, double>> m_scroll_callback;
+    std::pair<MouseButtonCallback, glfwCallbackType<int, int, int>> m_mouse_button_callback;
+    std::pair<FramebufferSizeCallback, glfwCallbackType<int, int>> m_framebuffer_size_callback;
 };
 
 } // GLFW
