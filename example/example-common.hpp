@@ -6,6 +6,7 @@
 #include "common/glfw_wrapper.hpp"
 #include "common/camera_controller.hpp"
 #include "common/imgui_wrapper.hpp"
+#include "common/load_obj.hpp"
 
 #include "simple-renderer/mesh.hpp"
 #include "simple-renderer/shader_program.hpp"
@@ -44,6 +45,14 @@ private:
 
 /// loads a texture from a file and create an OpenGL texture object from it.
 GLuint loadTexture(const char* filename);
+std::map<std::string, GLuint> loadTexturesFromDirectory(const std::string &directory);
+
+[[nodiscard]]
+simple::ShaderProgram loadShaderProgram(const std::string& vertex_shader_file_path,
+                                        const std::string& fragment_shader_file_path);
+
+[[nodiscard]]
+placement::ComputeShaderProgram loadComputeShaderProgram(const std::string& compute_shader_file_path);
 
 std::pair<simple::Mesh, simple::ShaderProgram> makeAxes();
 

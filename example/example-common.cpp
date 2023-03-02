@@ -1,21 +1,26 @@
-#include <chrono>
-#include <iostream>
-#include <vector>
-#include "imgui.h"
-#include "glutils/debug.hpp"
 #include "glutils/vertex_array.hpp"
 #include "glutils/buffer.hpp"
-#include "glutils/guard.hpp"
+
 #include "simple-renderer/glsl_definitions.hpp"
 #include "simple-renderer/renderer.hpp"
+
 #include "placement/placement.hpp"
+#include "placement/density_map.hpp"
+
 #include "example-common.hpp"
 
 #include "stb_image.h"
 
+#include "imgui.h"
+
 #include "glm/vec3.hpp"
 
 #include <array>
+#include <filesystem>
+#include <fstream>
+#include <chrono>
+#include <iostream>
+#include <vector>
 
 struct STBImageError : public std::runtime_error
 {
@@ -70,6 +75,24 @@ unsigned int loadTexture(const char *filename)
     gl.GenerateMipmap(GL_TEXTURE_2D);
 
     return texture;
+}
+
+std::map<std::string, GLuint> loadTexturesFromDirectory(const std::string &directory)
+{
+    std::map<std::string, GLuint> textures;
+
+    for (const auto &entry: std::filesystem::directory_iterator(directory))
+    {
+        if (!entry.is_regular_file()) continue;
+
+        try
+        { textures.emplace(entry.path().filename(), loadTexture(entry.path().c_str())); }
+
+        catch (std::exception &e)
+        { std::cout << "couldn't load " << entry.path() << ": " << e.what() << "\n"; }
+    }
+
+    return textures;
 }
 
 std::pair<simple::Mesh, simple::ShaderProgram> makeAxes()
@@ -307,4 +330,21 @@ void SimpleInstancedMesh::collectDrawCommands(const CommandCollector &collector)
     else
         collector.emplace(simple::DrawArraysInstancedCommand(m_draw_mode, 0, m_vertex_count, m_instance_count),
                           m_vertex_array);
+}
+
+[[nodiscard]]
+std::string loadTextFileToString(const std::string& filename)
+{
+    return (std::stringstream() << std::ifstream(filename).rdbuf()).str();
+}
+
+simple::ShaderProgram loadShaderProgram(const std::string& vertex_shader_file_path,
+                                        const std::string& fragment_shader_file_path)
+{
+    return {loadTextFileToString(vertex_shader_file_path), loadTextFileToString(fragment_shader_file_path)};
+}
+
+placement::ComputeShaderProgram loadComputeShaderProgram(const std::string& compute_shader_file_path)
+{
+    return placement::ComputeShaderProgram{loadTextFileToString(compute_shader_file_path)};
 }
