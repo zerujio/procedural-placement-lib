@@ -18,18 +18,18 @@ public:
     void update(float delta);
 
     [[nodiscard]] glm::vec3 getCameraPosition() const;
-    [[nodiscard]] glm::vec2 getPosition() const { return m_position; }
-    void setPosition(glm::vec2 position) { m_setClamped(m_position, position, m_min_position, m_max_position); }
+    [[nodiscard]] glm::vec3 getPosition() const { return m_position; }
+    void setPosition(glm::vec3 position) { m_setClamped(m_position, position, m_min_position, m_max_position); }
 
-    [[nodiscard]] glm::vec2 getMaxPosition() const { return m_max_position; }
-    void setMaxPosition(glm::vec2 max_position)
+    [[nodiscard]] glm::vec3 getMaxPosition() const { return m_max_position; }
+    void setMaxPosition(glm::vec3 max_position)
     {
         m_max_position = max_position;
         setPosition(getPosition());
     }
 
-    [[nodiscard]] glm::vec2 getMinPosition() const { return m_min_position; }
-    void setMinPosition(glm::vec2 min_position)
+    [[nodiscard]] glm::vec3 getMinPosition() const { return m_min_position; }
+    void setMinPosition(glm::vec3 min_position)
     {
         m_min_position = min_position;
         setPosition(getPosition());
@@ -97,9 +97,9 @@ private:
     simple::Camera& m_camera;
     GLFW::Window& m_window;
 
-    glm::vec2 m_position {0.0f};
-    glm::vec2 m_max_position {1.0f};
-    glm::vec2 m_min_position {0.0f};
+    glm::vec3 m_position {0.0f};
+    glm::vec3 m_max_position {1.0f};
+    glm::vec3 m_min_position {0.0f};
     float m_speed {1.0f};
 
     glm::vec2 m_angle {0.0f, glm::pi<float>() / 2.0f};

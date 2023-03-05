@@ -60,6 +60,8 @@ public:
     {
         glm::vec3 position;
         uint class_index;
+
+        static constexpr GLsizeiptr ssize = sizeof(position) + sizeof(class_index);
     };
 
     explicit Result(ResultBuffer &&buffer);
@@ -110,6 +112,10 @@ public:
     [[nodiscard]]
     uint getClassRangeElementCount(uint begin_class, uint end_class) const noexcept
     { return m_index_offset[end_class] - m_index_offset[begin_class]; }
+
+    [[nodiscard]]
+    GLintptr getClassBufferOffset(uint class_index) const
+    { return getElementArrayBufferOffset() + getClassIndexOffset(class_index) * Element::ssize; }
 
     /**
      * @brief Copy elements of classes in range [begin_class, end_class) from the element array to another buffer.

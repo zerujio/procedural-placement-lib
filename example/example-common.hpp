@@ -17,7 +17,9 @@
 class SimpleInstancedMesh : public simple::Drawable
 {
 public:
-    explicit SimpleInstancedMesh(const std::vector<glm::vec3>& vertices, const std::vector<unsigned int>& indices = {});
+    explicit SimpleInstancedMesh(const std::vector<glm::vec3> &vertices, const std::vector<glm::vec3> &vertex_normals,
+                                 const std::vector<glm::vec2> &vertex_texcoords,
+                                 const std::vector<unsigned int> &indices = {});
 
     ///
     void updateInstanceData(const placement::Result& result);

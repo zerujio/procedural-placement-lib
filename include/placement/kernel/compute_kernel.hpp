@@ -285,7 +285,7 @@ public:
         explicit CachedUniform(UniformLocation location) : m_location(location)
         {}
 
-        [[nodiscard]] const T &getCachedValue() const
+        [[nodiscard]] const T &getValue() const
         { return m_cached_value; }
 
     private:

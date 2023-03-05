@@ -257,6 +257,8 @@ std::vector<glm::vec3> generateCirclePositions(unsigned int num_vertices)
 }
 
 SimpleInstancedMesh::SimpleInstancedMesh(const std::vector<glm::vec3> &vertices,
+                                         const std::vector<glm::vec3> &vertex_normals,
+                                         const std::vector<glm::vec2> &vertex_texcoords,
                                          const std::vector<unsigned int> &indices) :
         m_vertex_count(vertices.size()),
         m_index_count(indices.size()),

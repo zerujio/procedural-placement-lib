@@ -53,10 +53,10 @@ void CameraController::update(float delta)
     {
         const float distance = m_speed * delta * m_radius;
 
-        const vec2 forward {-sin(m_angle.x), -cos(m_angle.x)};
+        const vec3 forward {-sin(m_angle.x), -cos(m_angle.x), 0.f};
         m_position += float(forward_input) * forward * distance;
 
-        const vec2 side = cross(glm::vec3(forward, 0), vec3(0, 0, 1));
+        const vec3 side = cross(forward, vec3(0, 0, 1));
         m_position += float(lateral_input) * side * distance;
 
         setPosition(m_position); // clamp and mark state dirty
@@ -74,7 +74,7 @@ void CameraController::update(float delta)
 
     if (m_scroll_input != 0)
     {
-        setRadius(m_radius - m_scroll_input * delta * m_radial_speed * .25f * m_radius);
+        setRadius(m_radius - m_scroll_input * delta * m_radial_speed);
         m_scroll_input = 0.0f;
     }
 
@@ -87,7 +87,7 @@ void CameraController::update(float delta)
 
 glm::vec3 CameraController::getCameraPosition() const
 {
-    return  glm::vec3(m_position, 0) + glm::vec3{
+    return  m_position + glm::vec3{
             m_radius * glm::sin(m_angle.y) * glm::sin(m_angle.x),
             m_radius * glm::sin(m_angle.y) * glm::cos(m_angle.x),
             m_radius * glm::cos(m_angle.y)
@@ -96,5 +96,5 @@ glm::vec3 CameraController::getCameraPosition() const
 
 void CameraController::m_updateViewMatrix() const
 {
-    m_camera.setViewMatrix(glm::lookAt(getCameraPosition(), {m_position, 0}, {0.0f, 0.0f, 1.0f}));
+    m_camera.setViewMatrix(glm::lookAt(getCameraPosition(), m_position, {0.0f, 0.0f, 1.0f}));
 }

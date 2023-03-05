@@ -49,7 +49,7 @@ public:
     [[nodiscard]]
     glm::vec2 getWorkGroupPatternBoundaries() const
     {
-        return m_work_group_scale.getCachedValue();
+        return m_work_group_scale.getValue();
     }
 
     [[nodiscard]]

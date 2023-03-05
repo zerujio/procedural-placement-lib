@@ -238,7 +238,7 @@ void main() {frag_color = vec4(layer_color, 1.0f);}
                              {});
     square_mesh.setDrawMode(simple::DrawMode::line_loop);
 
-    SimpleInstancedMesh instanced_mesh{generateCirclePositions(12)};
+    SimpleInstancedMesh instanced_mesh{generateCirclePositions(12), {}, {}};
     instanced_mesh.setDrawMode(simple::DrawMode::line_loop);
     instanced_mesh.updateInstanceData(future_result.readResult());
 
