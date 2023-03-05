@@ -189,9 +189,8 @@ auto loadFromFolder(const std::string &folder_path, Loader loader)
     return loaded;
 }
 
-template<typename Iter>
-[[nodiscard]]
-auto selectionGUI(const char *label, Iter current, Iter begin, Iter end)
+template<typename Iter, typename SelectionCallback>
+auto selectionGUI(const char *label, Iter current, Iter begin, Iter end, SelectionCallback selection_callback)
 {
     if (!ImGui::BeginCombo(label, current->first.c_str()))
         return current;
@@ -204,7 +203,10 @@ auto selectionGUI(const char *label, Iter current, Iter begin, Iter end)
 
         ImGui::PushID(filename.c_str());
         if (ImGui::Selectable(filename.c_str()))
+        {
             selection = option;
+            selection_callback(selection);
+        }
         ImGui::PopID();
     }
 
@@ -248,6 +250,146 @@ const simple::VertexAttributeSequence ResultMesh::attribute_sequence = simple::V
         .addAttribute<glm::vec3>()
         .addAttribute<float>();
 
+class PlacementGroup
+{
+public:
+    using TextureIter = std::map<std::string, simple::Texture2D>::const_iterator;
+    using MeshDataIter = std::map<std::string, MeshData>::const_iterator;
+
+    [[nodiscard]]
+    float getFootprint() const { return m_layer_data.footprint; }
+    void setFootprint(float diameter) { m_layer_data.footprint = diameter; }
+
+    void computePlacement(placement::PlacementPipeline& pipeline, placement::WorldData& world_data,
+                          glm::vec2 lower_bound, glm::vec2 upper_bound)
+    {
+        m_future_result = pipeline.computePlacement(world_data, m_layer_data, lower_bound, upper_bound);
+    }
+
+    void checkResult()
+    {
+        if (!m_future_result || !m_future_result->isReady())
+            return;
+
+        m_result = m_future_result->readResult();
+        m_future_result.reset();
+
+        for (uint i = 0; i < m_result->getNumClasses(); i++)
+        {
+            auto& mesh_opt = m_meshes[i];
+            if (mesh_opt)
+                mesh_opt->updateResult(m_result.value(), i);
+            else
+                mesh_opt = ResultMesh(m_iters[i].second->second, m_result.value(), i);
+        }
+    }
+
+    [[nodiscard]]
+    uint getNumLayers() const { return m_layer_data.densitymaps.size(); }
+
+    void addLayer(TextureIter texture, MeshDataIter mesh)
+    {
+        m_layer_data.densitymaps.emplace_back(placement::DensityMap{texture->second.getGLObject().getName()});
+        m_meshes.emplace_back();
+        m_iters.emplace_back(texture, mesh);
+    }
+
+    void removeLayer()
+    {
+        m_layer_data.densitymaps.pop_back();
+        m_meshes.pop_back();
+        m_iters.pop_back();
+    }
+
+    [[nodiscard]] TextureIter getLayerTexture(uint layer_index) const { return m_iters.at(layer_index).first; }
+    void setLayerTexture(uint layer_index, TextureIter texture_iter)
+    {
+        m_layer_data.densitymaps.at(layer_index).texture = texture_iter->second.getGLObject().getName();
+        m_iters[layer_index].first = texture_iter;
+    }
+
+    [[nodiscard]] MeshDataIter getLayerMesh(uint layer_index) const { return m_iters.at(layer_index).second; }
+    void setLayerMesh(uint layer_index, MeshDataIter mesh_data_iter)
+    {
+        auto& mesh = m_meshes.at(layer_index);
+        if (mesh && m_result)
+            mesh = ResultMesh(mesh_data_iter->second, m_result.value(), layer_index);
+
+        m_iters[layer_index].second = mesh_data_iter;
+    }
+    [[nodiscard]] const auto& getMeshes() const { return m_meshes; }
+
+    struct LayerParams
+    {
+        float scale;
+        float offset;
+        float min_value;
+        float max_value;
+    };
+
+    [[nodiscard]] LayerParams getLayerParams(uint layer_index)
+    {
+        const auto &dm = m_layer_data.densitymaps.at(layer_index);
+        return {dm.scale, dm.offset, dm.min_value, dm.max_value};
+    }
+
+    void setLayerParams(uint layer_index, LayerParams layer_params)
+    {
+        auto &dm = m_layer_data.densitymaps.at(layer_index);
+        dm.scale = layer_params.scale;
+        dm.offset = layer_params.offset;
+        dm.min_value = layer_params.min_value;
+        dm.max_value = layer_params.max_value;
+    }
+
+private:
+    placement::LayerData m_layer_data;
+    std::optional<placement::Result> m_result;
+    std::optional<placement::FutureResult> m_future_result;
+    std::vector<std::optional<ResultMesh>> m_meshes;
+    std::vector<std::pair<TextureIter, MeshDataIter>> m_iters;
+};
+
+void placementGroupGUI(PlacementGroup &placement_group, const std::map<std::string, simple::Texture2D> &textures,
+                       const std::map<std::string, MeshData> &meshes)
+{
+    float footprint = placement_group.getFootprint();
+    if (ImGui::DragFloat("Footprint", &footprint, 0.01f, 0.01f, FLT_MAX))
+        placement_group.setFootprint(footprint);
+
+    if (ImGui::BeginListBox("Layers", {0, ImGui::GetTextLineHeightWithSpacing() * 10.f}))
+    {
+        for (int i = 0; i < placement_group.getNumLayers(); i++)
+        {
+            if (ImGui::GetContentRegionAvail().y == 0)
+                break;
+
+            ImGui::PushID(i);
+            ImGui::Text("[%d]", i);
+            ImGui::SameLine();
+            if (ImGui::CollapsingHeader("DensityMap"))
+            {
+                selectionGUI("Mesh", placement_group.getLayerMesh(i), meshes.begin(), meshes.end(),
+                            [i, &placement_group](decltype(meshes.begin()) iter)
+                            { placement_group.setLayerMesh(i, iter); });
+                selectionGUI("Texture", placement_group.getLayerTexture(i), textures.begin(), textures.end(),
+                             [i, &placement_group](decltype(textures.begin()) iter)
+                             { placement_group.setLayerTexture(i, iter); });
+
+                auto params = placement_group.getLayerParams(i);
+                bool params_changed = false;
+                params_changed = ImGui::DragFloat("Scale", &params.scale, 0.001) || params_changed;
+                params_changed = ImGui::DragFloat("Offset", &params.offset, 0.001) || params_changed;
+                params_changed = ImGui::DragFloat2("Min./Max. value", &params.min_value, 0.001) || params_changed;
+                if (params_changed)
+                    placement_group.setLayerParams(i, params);
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndListBox();
+    }
+}
+
 int main()
 {
     GLFW::InitGuard glfw_init;
@@ -286,8 +428,8 @@ int main()
     PhongShader phong_shader;
     phong_shader.lightPosition() = {0, 0, 100};
     phong_shader.lightColor() = {1, 1, 1};
-    phong_shader.ambientLightIntensity() = .1f;
-    phong_shader.specularLightIntensity() = .5f;
+    phong_shader.ambientLightIntensity() = .5f;
+    phong_shader.specularLightIntensity() = .2f;
     phong_shader.colorTextureUnit() = 0;
     phong_shader.specularHighlightFactor() = 0.1f;
 
@@ -322,41 +464,66 @@ int main()
     // trees
     const auto tree_mesh_data = loadFromFolder("assets/meshes/trees", loadOBJ);
 
-    placement::LayerData tree_layer_data{2.5f, {{grayscale_textures.at("heightmap").getGLObject().getName(), -.5},
-                                                {grayscale_textures.at("white").getGLObject().getName(), 1.}}};
+    PlacementGroup tree_placement_group;
+    tree_placement_group.setFootprint(2.5);
 
-    std::optional<placement::FutureResult> tree_future_result = pipeline.computePlacement(world_data, tree_layer_data,
-                                                                                          {0, 0}, {1000, 1000});
+    tree_placement_group.addLayer(grayscale_textures.find("heightmap"), tree_mesh_data.begin());
+    tree_placement_group.setLayerParams(0, {-1., 0., -1., 1.});
 
-    std::vector<std::tuple<decltype(grayscale_textures)::const_iterator, decltype(tree_mesh_data)::const_iterator,
-            std::optional<ResultMesh>>> tree_result_meshes;
+    {
+        const float num_layers = tree_mesh_data.size();
+        uint current_layer = 1;
+        const auto linear_gradient_iter = grayscale_textures.find("linear_gradient");
 
-    tree_result_meshes.emplace_back(grayscale_textures.find("heightmap"), tree_mesh_data.begin(),
-                                    std::optional<ResultMesh>());
-    tree_result_meshes.emplace_back(grayscale_textures.find("white"), tree_mesh_data.begin(),
-                                    std::optional<ResultMesh>());
+        {
+            PlacementGroup::LayerParams blue_pine_params{1 / num_layers, 0, 0, 1};
+            for (int i = 1; i <= 5; i++)
+            {
+                tree_placement_group.addLayer(linear_gradient_iter,
+                                              tree_mesh_data.find("BluePineTree" + std::to_string(i)));
+                tree_placement_group.setLayerParams(current_layer++, blue_pine_params);
+            }
+        }
 
-    placement::Result tree_result{{0, 0, GL::Buffer()}};
+        {
+            PlacementGroup::LayerParams params{- 1/num_layers, 1/num_layers, 0, 1};
+            for (int i = 1; i <= 3; i++)
+            {
+                tree_placement_group.addLayer(linear_gradient_iter,
+                                              tree_mesh_data.find("PineTree" + std::to_string(i)));
+                tree_placement_group.setLayerParams(current_layer++, params);
+            }
+        }
+    }
+
+    tree_placement_group.computePlacement(pipeline, world_data, {0, 0}, world_size);
+
+    // stones
+    const auto stone_mesh_data = loadFromFolder("assets/meshes/stones", loadOBJ);
+
+    PlacementGroup stone_placement_group;
+    stone_placement_group.setFootprint(1.f);
+
+    {
+        const auto heightmap_iter = grayscale_textures.find("heightmap");
+        const PlacementGroup::LayerParams layer_params {1.f / stone_mesh_data.size(), 0, 0, 1};
+
+        uint current_layer = 0;
+        for (auto mesh_it = stone_mesh_data.begin(); mesh_it != stone_mesh_data.end(); mesh_it++)
+        {
+            stone_placement_group.addLayer(heightmap_iter, mesh_it);
+            stone_placement_group.setLayerParams(current_layer++, layer_params);
+        }
+    }
+
+    stone_placement_group.computePlacement(pipeline, world_data, {0, 0}, world_size);
 
     auto prev_frame_start_time = std::chrono::steady_clock::now();
     while (!glfwWindowShouldClose(window.get()))
     {
         // check for pending results
-        if (tree_future_result && tree_future_result->isReady())
-        {
-            tree_result = tree_future_result->readResult();
-
-            for (uint layer_index = 0; layer_index < tree_result.getNumClasses(); layer_index++)
-            {
-                auto &[tex_iter, mesh_iter, result_mesh] = tree_result_meshes[layer_index];
-                if (result_mesh)
-                    result_mesh->updateResult(tree_result, layer_index);
-                else
-                    result_mesh = ResultMesh(mesh_iter->second, tree_result, layer_index);
-            }
-
-            tree_future_result.reset();
-        }
+        tree_placement_group.checkResult();
+        stone_placement_group.checkResult();
 
         glfwPollEvents();
 
@@ -448,61 +615,41 @@ int main()
 
             if (ImGui::CollapsingHeader("Placement"))
             {
-                ImGui::BeginChild("WorldData");
+                ImGui::BeginChild("Placement");
 
-                ImGui::Text("World Data");
-                const auto selected_heightmap_iter = selectionGUI("Heightmap", current_heightmap_iter,
-                                                                  grayscale_textures.begin(), grayscale_textures.end());
+                ImGui::Text("World Data\nScale: %fx x %fy x %fz",
+                            world_data.scale.x, world_data.scale.y, world_data.scale.z);
 
-                if (selected_heightmap_iter != current_heightmap_iter)
-                {
-                    current_heightmap_iter = selected_heightmap_iter;
-                    world_data.heightmap = current_heightmap_iter->second.getGLObject().getName();
-                }
+                selectionGUI("Heightmap", current_heightmap_iter, grayscale_textures.begin(), grayscale_textures.end(),
+                             [&](decltype(current_heightmap_iter) new_iter)
+                             {
+                                world_data.heightmap = new_iter->second.getGLObject().getName();
+                                current_heightmap_iter = new_iter;
+                             });
+
+                ImGui::Spacing();
+                ImGui::Separator();
+
+                ImGui::Text("Trees");
+                ImGui::PushID("Trees");
+                placementGroupGUI(tree_placement_group, grayscale_textures, tree_mesh_data);
+                ImGui::PopID();
+
+                ImGui::Spacing();
+                ImGui::Separator();
+
+                ImGui::Text("Rocks");
+                ImGui::PushID("Rocks");
+                placementGroupGUI(stone_placement_group, grayscale_textures, stone_mesh_data);
+                ImGui::PopID();
 
                 ImGui::Separator();
-                ImGui::Text("Layer Data");
-
-                ImGui::DragFloat("Footprint", &tree_layer_data.footprint, 0.01f, 0.01f, FLT_MAX);
-
-                if (ImGui::BeginListBox("Tree Layers"))
-                {
-                    for (int i = 0; i < tree_layer_data.densitymaps.size(); i++)
-                    {
-                        ImGui::PushID(i);
-                        ImGui::Text("[%d]", i);
-                        ImGui::SameLine();
-                        if (ImGui::CollapsingHeader("DensityMap"))
-                        {
-                            auto &[tex_iter, mesh_iter, result_mesh] = tree_result_meshes[i];
-                            const auto selected_mesh = selectionGUI("Mesh", mesh_iter, tree_mesh_data.begin(),
-                                                                    tree_mesh_data.end());
-                            if (selected_mesh != mesh_iter)
-                            {
-                                mesh_iter = selected_mesh;
-                                result_mesh = ResultMesh(mesh_iter->second, tree_result, i);
-                            }
-
-                            const auto selected_density_map_iter = selectionGUI("Texture", tex_iter,
-                                                                                grayscale_textures.begin(),
-                                                                                grayscale_textures.end());
-                            if (selected_density_map_iter != tex_iter)
-                            {
-                                tex_iter = selected_heightmap_iter;
-                                tree_layer_data.densitymaps[i].texture = tex_iter->second.getGLObject().getName();
-                            }
-                            auto& density_map = tree_layer_data.densitymaps[i];
-                            ImGui::DragFloat("Scale", &density_map.scale, 0.001);
-                            ImGui::DragFloat("Offset", &density_map.offset, 0.001);
-                            ImGui::DragFloat2("Min./Max. value", &density_map.min_value, 0.001);
-                        }
-                        ImGui::PopID();
-                    }
-                }
-                ImGui::EndListBox();
 
                 if (ImGui::Button("Compute Placement"))
-                    tree_future_result = pipeline.computePlacement(world_data, tree_layer_data, {0, 0}, world_size);
+                {
+                    tree_placement_group.computePlacement(pipeline, world_data, {0, 0}, world_size);
+                    stone_placement_group.computePlacement(pipeline, world_data, {0, 0}, world_size);
+                }
 
                 ImGui::EndChild();
             }
@@ -513,13 +660,16 @@ int main()
 
         // Render
 
-        renderer.draw(axes_mesh, axes_shader, glm::scale(glm::mat4(1),
-                                                         glm::vec3(glm::max(1.f, camera.getController().getRadius() /
-                                                                                 2.f))));
+        renderer.draw(axes_mesh, axes_shader,
+                      glm::scale(glm::mat4(1), glm::vec3(glm::max(1.f, camera.getController().getRadius() / 2.f))));
 
-        for (auto &[_0, _1, mesh]: tree_result_meshes)
-            if (mesh)
-                renderer.draw(mesh->getMesh(), phong_shader.getRendererProgram(), base_tree_transform);
+        for (auto &mesh_opt : tree_placement_group.getMeshes())
+            if (mesh_opt)
+                renderer.draw(mesh_opt->getMesh(), phong_shader.getRendererProgram(), base_tree_transform);
+
+        for (auto &mesh_opt : stone_placement_group.getMeshes())
+            if (mesh_opt)
+                renderer.draw(mesh_opt->getMesh(), phong_shader.getRendererProgram(), glm::mat4(1.f));
 
         renderer.finishFrame(camera.getRendererCamera());
 
