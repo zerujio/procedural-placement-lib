@@ -337,7 +337,10 @@ void SimpleInstancedMesh::collectDrawCommands(const CommandCollector &collector)
 [[nodiscard]]
 std::string loadTextFileToString(const std::string& filename)
 {
-    return (std::stringstream() << std::ifstream(filename).rdbuf()).str();
+    std::ifstream ifstream{filename};
+    if (!ifstream.is_open())
+        throw std::runtime_error("failed to open file " + filename);
+    return (std::stringstream() << ifstream.rdbuf()).str();
 }
 
 simple::ShaderProgram loadShaderProgram(const std::string& vertex_shader_file_path,

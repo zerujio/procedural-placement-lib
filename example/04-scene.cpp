@@ -257,10 +257,13 @@ public:
     using MeshDataIter = std::map<std::string, MeshData>::const_iterator;
 
     [[nodiscard]]
-    float getFootprint() const { return m_layer_data.footprint; }
-    void setFootprint(float diameter) { m_layer_data.footprint = diameter; }
+    float getFootprint() const
+    { return m_layer_data.footprint; }
 
-    void computePlacement(placement::PlacementPipeline& pipeline, placement::WorldData& world_data,
+    void setFootprint(float diameter)
+    { m_layer_data.footprint = diameter; }
+
+    void computePlacement(placement::PlacementPipeline &pipeline, placement::WorldData &world_data,
                           glm::vec2 lower_bound, glm::vec2 upper_bound)
     {
         m_future_result = pipeline.computePlacement(world_data, m_layer_data, lower_bound, upper_bound);
@@ -276,7 +279,7 @@ public:
 
         for (uint i = 0; i < m_result->getNumClasses(); i++)
         {
-            auto& mesh_opt = m_meshes[i];
+            auto &mesh_opt = m_meshes[i];
             if (mesh_opt)
                 mesh_opt->updateResult(m_result.value(), i);
             else
@@ -285,7 +288,8 @@ public:
     }
 
     [[nodiscard]]
-    uint getNumLayers() const { return m_layer_data.densitymaps.size(); }
+    uint getNumLayers() const
+    { return m_layer_data.densitymaps.size(); }
 
     void addLayer(TextureIter texture, MeshDataIter mesh)
     {
@@ -301,23 +305,29 @@ public:
         m_iters.pop_back();
     }
 
-    [[nodiscard]] TextureIter getLayerTexture(uint layer_index) const { return m_iters.at(layer_index).first; }
+    [[nodiscard]] TextureIter getLayerTexture(uint layer_index) const
+    { return m_iters.at(layer_index).first; }
+
     void setLayerTexture(uint layer_index, TextureIter texture_iter)
     {
         m_layer_data.densitymaps.at(layer_index).texture = texture_iter->second.getGLObject().getName();
         m_iters[layer_index].first = texture_iter;
     }
 
-    [[nodiscard]] MeshDataIter getLayerMesh(uint layer_index) const { return m_iters.at(layer_index).second; }
+    [[nodiscard]] MeshDataIter getLayerMesh(uint layer_index) const
+    { return m_iters.at(layer_index).second; }
+
     void setLayerMesh(uint layer_index, MeshDataIter mesh_data_iter)
     {
-        auto& mesh = m_meshes.at(layer_index);
+        auto &mesh = m_meshes.at(layer_index);
         if (mesh && m_result)
             mesh = ResultMesh(mesh_data_iter->second, m_result.value(), layer_index);
 
         m_iters[layer_index].second = mesh_data_iter;
     }
-    [[nodiscard]] const auto& getMeshes() const { return m_meshes; }
+
+    [[nodiscard]] const auto &getMeshes() const
+    { return m_meshes; }
 
     struct LayerParams
     {
@@ -370,8 +380,8 @@ void placementGroupGUI(PlacementGroup &placement_group, const std::map<std::stri
             if (ImGui::CollapsingHeader("DensityMap"))
             {
                 selectionGUI("Mesh", placement_group.getLayerMesh(i), meshes.begin(), meshes.end(),
-                            [i, &placement_group](decltype(meshes.begin()) iter)
-                            { placement_group.setLayerMesh(i, iter); });
+                             [i, &placement_group](decltype(meshes.begin()) iter)
+                             { placement_group.setLayerMesh(i, iter); });
                 selectionGUI("Texture", placement_group.getLayerTexture(i), textures.begin(), textures.end(),
                              [i, &placement_group](decltype(textures.begin()) iter)
                              { placement_group.setLayerTexture(i, iter); });
@@ -388,7 +398,193 @@ void placementGroupGUI(PlacementGroup &placement_group, const std::map<std::stri
         }
         ImGui::EndListBox();
     }
+
+    if (ImGui::Button("Add layer"))
+    {
+        const auto n_layers = placement_group.getNumLayers();
+        if (n_layers > 0)
+        {
+            placement_group.addLayer(placement_group.getLayerTexture(n_layers - 1),
+                                     placement_group.getLayerMesh(n_layers - 1));
+            placement_group.setLayerParams(n_layers, placement_group.getLayerParams(n_layers - 1));
+        }
+        else
+            placement_group.addLayer(textures.begin(), meshes.begin());
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Remove Layer"))
+        placement_group.removeLayer();
 }
+
+class HeightmapComputeShader
+{
+public:
+    static constexpr glm::uvec2 work_group_size{8, 8};
+
+    void operator()(glm::uvec2 num_work_groups, GLint heightmap_tex_unit, GLuint position_binding,
+                    GLuint normals_binding, GLuint tex_coord_binding, GLuint indices_binding)
+    {
+        m_program.setUniform(m_heightmap, heightmap_tex_unit);
+        m_program.setShaderStorageBlockBindingIndex(m_positions, position_binding);
+        m_program.setShaderStorageBlockBindingIndex(m_normals, normals_binding);
+        m_program.setShaderStorageBlockBindingIndex(m_tex_coords, tex_coord_binding);
+        m_program.setShaderStorageBlockBindingIndex(m_indices, indices_binding);
+        m_program.dispatch({num_work_groups, 1});
+    }
+
+private:
+    placement::ComputeShaderProgram m_program{loadComputeShaderProgram("assets/shaders/heightmap.comp")};
+    using CS = placement::ComputeShaderProgram;
+    CS::ShaderStorageBlock m_positions{m_program.getShaderStorageBlockIndex("Positions")};
+    CS::ShaderStorageBlock m_normals{m_program.getShaderStorageBlockIndex("Normals")};
+    CS::ShaderStorageBlock m_tex_coords{m_program.getShaderStorageBlockIndex("TexCoords")};
+    CS::ShaderStorageBlock m_indices{m_program.getShaderStorageBlockIndex("Indices")};
+    CS::TypedUniform<int> m_heightmap{m_program.getUniformLocation("u_heightmap")};
+};
+
+class TerrainMesh : public simple::Drawable
+{
+public:
+    TerrainMesh()
+    {
+        m_vertex_attributes.bindIndexBuffer(m_vertex_buffer);
+    }
+
+    void generate(glm::uvec2 num_work_groups, GLuint heightmap_tex_unit)
+    {
+        const glm::uvec2 grid_size = num_work_groups * HeightmapComputeShader::work_group_size;
+        const GLuint num_vertices = grid_size.x * grid_size.y;
+
+        m_num_indices = (grid_size.x - 1) * (grid_size.y - 1) * 6;
+
+        const std::size_t required_size = sizeof(float) * (4 + 4 + 2) * num_vertices + sizeof(uint) * m_num_indices;
+
+        if (required_size > m_vertex_buffer.getBufferSize())
+        {
+            m_vertex_buffer = simple::VertexBuffer(required_size);
+            m_vertex_attributes.bindIndexBuffer(m_vertex_buffer);
+        }
+
+        const auto buffer_handle = m_vertex_buffer.getBufferHandle();
+        const auto makeInitializer = [=](GLuint binding_index)
+        {
+            return [=](simple::WBufferRef ref)
+            {
+                buffer_handle.bindRange(GL::Buffer::IndexedTarget::shader_storage, binding_index,
+                                        ref.getOffset(), ref.getSize());
+            };
+        };
+
+        const auto bindProperty = [this, &makeInitializer](int location,
+                                                           const simple::VertexAttributeSequence &attribs,
+                                                           uint num_vertices)
+        {
+            if (location < m_vertex_buffer.getSectionCount())
+                m_vertex_buffer.updateAttributeData(location, makeInitializer(location));
+            else
+            {
+                const auto &desc = m_vertex_buffer.addAttributeData(makeInitializer(location), num_vertices, attribs);
+                m_vertex_attributes.bindAttributes(m_vertex_buffer, desc, std::array{location});
+            }
+
+        };
+
+        {
+            const auto vec3_attrib = simple::VertexAttributeSequence()
+                    .addAttribute<glm::vec3>()
+                    .addPadding(sizeof(float));
+            // positions
+            bindProperty(0, vec3_attrib, num_vertices);
+
+            //normals
+            bindProperty(1, vec3_attrib, num_vertices);
+        }
+
+        // tex coords
+        bindProperty(2, simple::VertexAttributeSequence().addAttribute<glm::vec2>(), num_vertices);
+
+        // indices
+        bindProperty(3, simple::VertexAttributeSequence().addAttribute<uint>(), m_num_indices);
+        m_index_buffer_offset = m_vertex_buffer.getSectionDescriptor(3).buffer_offset;
+
+        m_compute_shader(num_work_groups, heightmap_tex_unit, 0, 1, 2, 3);
+        GL::gl.MemoryBarrier(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT | GL_ELEMENT_ARRAY_BARRIER_BIT);
+    }
+
+    void collectDrawCommands(const CommandCollector &collector) const override
+    {
+        m_vertex_attributes.emplaceDrawCommand<simple::DrawElementsCommand>(collector,
+                                                                            {simple::DrawMode::triangles,
+                                                                             m_num_indices,
+                                                                             simple::IndexType::unsigned_int,
+                                                                             m_index_buffer_offset});
+    }
+
+private:
+    HeightmapComputeShader m_compute_shader;
+    simple::VertexAttributeSpecification m_vertex_attributes;
+    simple::VertexBuffer m_vertex_buffer{4096};
+    std::uintptr_t m_index_buffer_offset{0};
+    std::uint32_t m_num_indices{0};
+};
+
+class TerrainPhongShader
+{
+    using SP = simple::ShaderProgram;
+
+public:
+    [[nodiscard]]
+    const simple::ShaderProgram &getRendererProgram() const
+    { return m_program; };
+
+    void setViewPosition(glm::vec3 position) const
+    { setUniform(m_view_position, position); }
+
+    void setLightColor(glm::vec3 color) const
+    { setUniform(m_light_color, color); }
+
+    void setLightPosition(glm::vec3 position) const
+    { setUniform(m_light_position, position); }
+
+    void setAmbientLightIntensity(float value) const
+    { setUniform(m_ambient_light_intensity, value); }
+
+    void setSpecularLightIntensity(float value) const
+    { setUniform(m_specular_light_intensity, value); }
+
+    void setSpecularHighlightFactor(float value) const
+    { setUniform(m_specular_highlight_factor, value); }
+
+    [[nodiscard]] auto heightmap()
+    { return m_program.makeAccessor(m_heightmap); }
+
+    [[nodiscard]] auto colorTexUnit()
+    { return m_program.makeAccessor(m_color_palette); }
+
+    [[nodiscard]] auto lowColorIndex()
+    { return m_program.makeAccessor(m_low_color); }
+
+    [[nodiscard]] auto highColorIndex()
+    { return m_program.makeAccessor(m_high_color); }
+
+private:
+    template<typename U, typename T>
+    void setUniform(const U &uniform, const T &value) const
+    { m_program.setUniform(uniform, value); }
+
+    simple::ShaderProgram m_program{
+            loadShaderProgram("assets/shaders/phong.vert", "assets/shaders/phong_terrain.frag")};
+    SP::TypedUniform <glm::vec3> m_view_position{m_program.getUniformLocation("u_view_position")};
+    SP::TypedUniform <glm::vec3> m_light_color{m_program.getUniformLocation("u_light_color")};
+    SP::TypedUniform <glm::vec3> m_light_position{m_program.getUniformLocation("u_light_position")};
+    SP::TypedUniform<float> m_ambient_light_intensity{m_program.getUniformLocation("u_ambient_light_intensity")};
+    SP::TypedUniform<float> m_specular_light_intensity{m_program.getUniformLocation("u_specular_light_intensity")};
+    SP::TypedUniform<float> m_specular_highlight_factor{m_program.getUniformLocation("u_specular_highlight_factor")};
+    SP::CachedUniform<int> m_heightmap{m_program.getUniformLocation("u_heightmap")};
+    SP::CachedUniform<int> m_color_palette{m_program.getUniformLocation("u_color_palette")};
+    SP::CachedUniform <uint> m_high_color{m_program.getUniformLocation("u_color_palette_high")};
+    SP::CachedUniform <uint> m_low_color{m_program.getUniformLocation("u_color_palette_low")};
+};
 
 int main()
 {
@@ -425,13 +621,16 @@ int main()
     constexpr uint invalid_index = 0xffFFffFF;
     GL::gl.VertexAttribI1ui(5, invalid_index);
 
+    constexpr GLuint color_texture_unit = 0;
+    constexpr GLuint heightmap_texture_unit = 1;
+
     PhongShader phong_shader;
-    phong_shader.lightPosition() = {0, 0, 100};
-    phong_shader.lightColor() = {1, 1, 1};
-    phong_shader.ambientLightIntensity() = .5f;
-    phong_shader.specularLightIntensity() = .2f;
-    phong_shader.colorTextureUnit() = 0;
+    phong_shader.lightPosition() = {0, 0, 1000};
+    phong_shader.lightColor() = {1., 1., 1.};
+    phong_shader.ambientLightIntensity() = .4f;
+    phong_shader.specularLightIntensity() = .05f;
     phong_shader.specularHighlightFactor() = 0.1f;
+    phong_shader.colorTextureUnit() = color_texture_unit;
 
     const auto [axes_mesh, axes_shader] = makeAxes();
 
@@ -450,10 +649,10 @@ int main()
 
     const simple::Texture2D color_texture{simple::ImageData::fromFile("assets/textures/color_palette.png"), false};
 
-    GL::Texture::bindTextureUnit(0, color_texture.getGLObject());
+    GL::Texture::bindTextureUnit(color_texture_unit, color_texture.getGLObject());
 
     placement::PlacementPipeline pipeline;
-    pipeline.setBaseTextureUnit(1);
+    pipeline.setBaseTextureUnit(glm::max(heightmap_texture_unit, color_texture_unit) + 1);
 
     auto current_heightmap_iter = grayscale_textures.find("heightmap");
     if (current_heightmap_iter == grayscale_textures.end())
@@ -465,10 +664,10 @@ int main()
     const auto tree_mesh_data = loadFromFolder("assets/meshes/trees", loadOBJ);
 
     PlacementGroup tree_placement_group;
-    tree_placement_group.setFootprint(2.5);
+    tree_placement_group.setFootprint(1.75);
 
-    tree_placement_group.addLayer(grayscale_textures.find("heightmap"), tree_mesh_data.begin());
-    tree_placement_group.setLayerParams(0, {-1., 0., -1., 1.});
+    tree_placement_group.addLayer(current_heightmap_iter, tree_mesh_data.begin());
+    tree_placement_group.setLayerParams(0, {-.1, 0., -1., 1.});
 
     {
         const float num_layers = tree_mesh_data.size();
@@ -486,7 +685,7 @@ int main()
         }
 
         {
-            PlacementGroup::LayerParams params{- 1/num_layers, 1/num_layers, 0, 1};
+            PlacementGroup::LayerParams params{-1 / num_layers, 1 / num_layers, 0, 1};
             for (int i = 1; i <= 3; i++)
             {
                 tree_placement_group.addLayer(linear_gradient_iter,
@@ -496,27 +695,52 @@ int main()
         }
     }
 
-    tree_placement_group.computePlacement(pipeline, world_data, {0, 0}, world_size);
-
     // stones
     const auto stone_mesh_data = loadFromFolder("assets/meshes/stones", loadOBJ);
 
     PlacementGroup stone_placement_group;
-    stone_placement_group.setFootprint(1.f);
+    stone_placement_group.setFootprint(2.25f);
 
     {
-        const auto heightmap_iter = grayscale_textures.find("heightmap");
-        const PlacementGroup::LayerParams layer_params {1.f / stone_mesh_data.size(), 0, 0, 1};
+        const PlacementGroup::LayerParams layer_params{1.f / stone_mesh_data.size(), 0, 0, 1};
 
         uint current_layer = 0;
         for (auto mesh_it = stone_mesh_data.begin(); mesh_it != stone_mesh_data.end(); mesh_it++)
         {
-            stone_placement_group.addLayer(heightmap_iter, mesh_it);
+            stone_placement_group.addLayer(current_heightmap_iter, mesh_it);
             stone_placement_group.setLayerParams(current_layer++, layer_params);
         }
     }
 
-    stone_placement_group.computePlacement(pipeline, world_data, {0, 0}, world_size);
+    const auto dispatchPlacementCompute = [&]()
+    {
+        tree_placement_group.computePlacement(pipeline, world_data, {0, 0}, world_size);
+        stone_placement_group.computePlacement(pipeline, world_data, {0, 0}, world_size);
+    };
+
+    dispatchPlacementCompute();
+
+    // terrain
+    TerrainMesh terrain_mesh;
+    GL::Texture::bindTextureUnit(heightmap_texture_unit, current_heightmap_iter->second.getGLObject());
+
+    const auto dispatchTerrainCompute = [&]()
+    { terrain_mesh.generate({64, 64}, heightmap_texture_unit); };
+
+    dispatchTerrainCompute();
+
+    const auto terrain_transform{glm::scale(glm::mat4(1), world_size)};
+
+    TerrainPhongShader terrain_shader;
+    terrain_shader.colorTexUnit() = color_texture_unit;
+    terrain_shader.heightmap() = heightmap_texture_unit;
+    terrain_shader.setLightPosition(phong_shader.lightPosition());
+    terrain_shader.setLightColor(phong_shader.lightColor());
+    terrain_shader.setAmbientLightIntensity(phong_shader.ambientLightIntensity());
+    terrain_shader.setSpecularLightIntensity(phong_shader.specularLightIntensity());
+    terrain_shader.setSpecularHighlightFactor(phong_shader.specularHighlightFactor());
+    terrain_shader.lowColorIndex() = 12;
+    terrain_shader.highColorIndex() = 16;
 
     auto prev_frame_start_time = std::chrono::steady_clock::now();
     while (!glfwWindowShouldClose(window.get()))
@@ -536,7 +760,7 @@ int main()
 
         camera.getController().update(frame_delta.count());
 
-        phong_shader.viewPosition() = camera.getController().getCameraPosition();
+        terrain_shader.setViewPosition(phong_shader.viewPosition() = camera.getController().getCameraPosition());
 
         if (ImGui::Begin("Settings"))
         {
@@ -549,28 +773,40 @@ int main()
                 {
                     glm::vec3 current_light_position = phong_shader.lightPosition();
                     if (ImGui::DragFloat3("Light position", glm::value_ptr(current_light_position)))
-                        phong_shader.lightPosition() = current_light_position;
+                        terrain_shader.setLightPosition(phong_shader.lightPosition() = current_light_position);
                 }
 
                 // light color
                 {
                     glm::vec3 current_light_color = phong_shader.lightColor();
                     if (ImGui::ColorEdit3("Light color", glm::value_ptr(current_light_color)))
-                        phong_shader.lightColor() = current_light_color;
+                        terrain_shader.setLightColor(phong_shader.lightColor() = current_light_color);
                 }
 
                 // ambient light
                 {
                     float ambient_light = phong_shader.ambientLightIntensity();
                     if (ImGui::DragFloat("Ambient light intensity", &ambient_light, 0.05, 0., 1.))
-                        phong_shader.ambientLightIntensity() = ambient_light;
+                        terrain_shader.setAmbientLightIntensity(phong_shader.ambientLightIntensity() = ambient_light);
                 }
 
                 // specular light
                 {
                     float specular_light = phong_shader.specularLightIntensity();
                     if (ImGui::DragFloat("Specular light intensity", &specular_light, 0.05, 0., 1.))
-                        phong_shader.specularLightIntensity() = specular_light;
+                        terrain_shader.setSpecularLightIntensity(
+                                phong_shader.specularLightIntensity() = specular_light);
+                }
+
+                // terrain color
+                {
+                    ImGui::Text("Terrain color palette indices");
+                    glm::ivec2 terrain_color_indices {terrain_shader.lowColorIndex(), terrain_shader.highColorIndex()};
+                    if (ImGui::DragInt2("Low/High", glm::value_ptr(terrain_color_indices), .5, 0, 48))
+                    {
+                        terrain_shader.lowColorIndex() = terrain_color_indices.x;
+                        terrain_shader.highColorIndex() = terrain_color_indices.y;
+                    }
                 }
             }
 
@@ -622,10 +858,7 @@ int main()
 
                 selectionGUI("Heightmap", current_heightmap_iter, grayscale_textures.begin(), grayscale_textures.end(),
                              [&](decltype(current_heightmap_iter) new_iter)
-                             {
-                                world_data.heightmap = new_iter->second.getGLObject().getName();
-                                current_heightmap_iter = new_iter;
-                             });
+                             { current_heightmap_iter = new_iter; });
 
                 ImGui::Spacing();
                 ImGui::Separator();
@@ -647,8 +880,17 @@ int main()
 
                 if (ImGui::Button("Compute Placement"))
                 {
-                    tree_placement_group.computePlacement(pipeline, world_data, {0, 0}, world_size);
-                    stone_placement_group.computePlacement(pipeline, world_data, {0, 0}, world_size);
+
+                    const GL::TextureHandle heightmap_texture = current_heightmap_iter->second.getGLObject();
+
+                    if (world_data.heightmap != heightmap_texture.getName())
+                    {
+                        GL::Texture::bindTextureUnit(heightmap_texture_unit, heightmap_texture);
+                        dispatchTerrainCompute();
+                    }
+
+                    world_data.heightmap = heightmap_texture.getName();
+                    dispatchPlacementCompute();
                 }
 
                 ImGui::EndChild();
@@ -663,13 +905,15 @@ int main()
         renderer.draw(axes_mesh, axes_shader,
                       glm::scale(glm::mat4(1), glm::vec3(glm::max(1.f, camera.getController().getRadius() / 2.f))));
 
-        for (auto &mesh_opt : tree_placement_group.getMeshes())
+        for (auto &mesh_opt: tree_placement_group.getMeshes())
             if (mesh_opt)
                 renderer.draw(mesh_opt->getMesh(), phong_shader.getRendererProgram(), base_tree_transform);
 
-        for (auto &mesh_opt : stone_placement_group.getMeshes())
+        for (auto &mesh_opt: stone_placement_group.getMeshes())
             if (mesh_opt)
                 renderer.draw(mesh_opt->getMesh(), phong_shader.getRendererProgram(), glm::mat4(1.f));
+
+        renderer.draw(terrain_mesh, terrain_shader.getRendererProgram(), terrain_transform);
 
         renderer.finishFrame(camera.getRendererCamera());
 

@@ -1,0 +1,77 @@
+#version 460
+
+layout (local_size_x = 8, local_size_y = 8) in;
+
+uniform sampler2D u_heightmap;
+
+layout (std430, binding = 0) restrict writeonly
+buffer Positions {
+    vec3 positions[];
+};
+
+layout (std430, binding = 1) restrict writeonly
+buffer Normals {
+    vec3 normals[];
+};
+
+layout (std430, binding = 2) restrict writeonly
+buffer TexCoords {
+    vec2 texCoords[];
+};
+
+layout (std430, binding = 3) restrict writeonly
+buffer Indices {
+    uint indices[];
+};
+
+uvec2 gridSize() {
+    return (gl_WorkGroupSize * gl_NumWorkGroups).xy;
+}
+
+uint threadId(uint x_offset, uint y_offset) {
+    const uvec2 offset = {x_offset, y_offset};
+    const uvec2 id = gl_GlobalInvocationID.xy + offset;
+    return id.y * (gl_WorkGroupSize * gl_NumWorkGroups).x + id.x;
+}
+
+void main() {
+    uvec2 grid_size = gridSize();
+    uint thread_id = threadId(0, 0);
+
+    // position and UVs
+    vec2 tex_coord = vec2(gl_GlobalInvocationID) / (grid_size.xy - 1);
+    float height = texture(u_heightmap, tex_coord).r;
+
+    positions[thread_id] = vec3(tex_coord, height);
+    texCoords[thread_id] = tex_coord;
+
+    // normal
+    vec2 tex_coord_plus = vec2(gl_GlobalInvocationID + 1) / (grid_size.xy - 1);
+    vec2 height_plus = {
+    texture(u_heightmap, vec2(tex_coord_plus.x, tex_coord.y)).x,
+    texture(u_heightmap, vec2(tex_coord.x, tex_coord_plus.y)).x
+    };
+
+    vec2 tex_coord_minus = vec2(ivec2(gl_GlobalInvocationID) - 1) / (grid_size.xy - 1);
+    vec2 height_minus = {
+    texture(u_heightmap, vec2(tex_coord_minus.x, tex_coord.y)).x,
+    texture(u_heightmap, vec2(tex_coord.x, tex_coord_minus.y)).x
+    };
+
+    vec2 dheight_d = (height_plus - height_minus) / (tex_coord_plus - tex_coord_minus); // <- partial derivative
+
+    normals[thread_id] = normalize(vec3(-dheight_d.x, -dheight_d.y, 1));
+
+    // write indices to EBO
+    if (gl_GlobalInvocationID.x < grid_size.x - 1 && gl_GlobalInvocationID.y < grid_size.y - 1) {
+        uint offset = (gl_GlobalInvocationID.y * (grid_size.x - 1) + gl_GlobalInvocationID.x) * 6;
+
+        indices[offset] = thread_id;
+        indices[offset + 1] = threadId(1, 0);
+        indices[offset + 2] = threadId(1, 1);
+
+        indices[offset + 3] = threadId(1, 1);
+        indices[offset + 4] = threadId(0, 1);
+        indices[offset + 5] = thread_id;
+    }
+}
