@@ -9,32 +9,32 @@
 
 #include "imgui.h"
 
-CameraController::CameraController(simple::Camera &camera, GLFW::Window& window) : m_camera(camera), m_window(window)
+CameraController::CameraController(simple::Camera &camera, GLFW::Window &window) : m_camera(camera), m_window(window)
 {
-    window.setMouseButtonCallback([this](GLFW::Window& window, int button, int action, int)
-    {
-        if (ImGui::GetIO().WantCaptureMouse || button != GLFW_MOUSE_BUTTON_1)
-            return;
+    window.setMouseButtonCallback([this](GLFW::Window &window, int button, int action, int)
+                                  {
+                                      if (ImGui::GetIO().WantCaptureMouse || button != GLFW_MOUSE_BUTTON_1)
+                                          return;
 
-        if (action == GLFW_PRESS)
-        {
-            m_dragging = true;
+                                      if (action == GLFW_PRESS)
+                                      {
+                                          m_dragging = true;
 
-            double x, y;
-            glfwGetCursorPos(window.get(), &x, &y);
-            m_cursor_prev = glm::vec2(x, y);
-        }
-        else if (action == GLFW_RELEASE)
-            m_dragging = false;
-    });
+                                          double x, y;
+                                          glfwGetCursorPos(window.get(), &x, &y);
+                                          m_cursor_prev = glm::vec2(x, y);
+                                      }
+                                      else if (action == GLFW_RELEASE)
+                                          m_dragging = false;
+                                  });
 
-    window.setScrollCallback([this](GLFW::Window&, double, double yoffset)
-    {
-        if (ImGui::GetIO().WantCaptureMouse)
-            return;
+    window.setScrollCallback([this](GLFW::Window &, double, double yoffset)
+                             {
+                                 if (ImGui::GetIO().WantCaptureMouse)
+                                     return;
 
-        m_scroll_input += yoffset * m_radius;
-    });
+                                 m_scroll_input += yoffset * m_radius;
+                             });
 }
 
 void CameraController::update(float delta)
@@ -48,18 +48,21 @@ void CameraController::update(float delta)
 
     const int forward_input = get_key(GLFW_KEY_W) - get_key(GLFW_KEY_S);
     const int lateral_input = get_key(GLFW_KEY_D) - get_key(GLFW_KEY_A);
+    const int vertical_input = get_key(GLFW_KEY_R) - get_key(GLFW_KEY_F);
 
-    if (forward_input || lateral_input)
+    if (forward_input || lateral_input || vertical_input)
     {
         const float distance = m_speed * delta * m_radius;
 
-        const vec3 forward {-sin(m_angle.x), -cos(m_angle.x), 0.f};
-        m_position += float(forward_input) * forward * distance;
+        const vec3 forward{-sin(m_angle.x), -cos(m_angle.x), 0.f};
+        constexpr vec3 up = {0, 0, 1};
+        const vec3 side = cross(forward, up);
 
-        const vec3 side = cross(forward, vec3(0, 0, 1));
-        m_position += float(lateral_input) * side * distance;
+        const auto movement_direction = float(forward_input) * forward
+                                        + float(lateral_input) * side
+                                        + float(vertical_input) * up;
 
-        setPosition(m_position); // clamp and mark state dirty
+        setPosition(m_position + glm::normalize(movement_direction) * distance); // clamp and mark state dirty
     }
 
     if (m_dragging)
@@ -87,7 +90,7 @@ void CameraController::update(float delta)
 
 glm::vec3 CameraController::getCameraPosition() const
 {
-    return  m_position + glm::vec3{
+    return m_position + glm::vec3{
             m_radius * glm::sin(m_angle.y) * glm::sin(m_angle.x),
             m_radius * glm::sin(m_angle.y) * glm::cos(m_angle.x),
             m_radius * glm::cos(m_angle.y)

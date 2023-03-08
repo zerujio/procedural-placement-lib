@@ -7,10 +7,12 @@
 #include "simple-renderer/image_data.hpp"
 #include "glutils/debug.hpp"
 #include "imgui.h"
+#include "external/json.hpp"
 
 #include <chrono>
 #include <iostream>
 #include <filesystem>
+#include <fstream>
 
 constexpr glm::vec2 initial_window_size{1024, 768};
 
@@ -514,11 +516,13 @@ public:
     void collectDrawCommands(const CommandCollector &collector) const override
     {
         m_vertex_attributes.emplaceDrawCommand<simple::DrawElementsCommand>(collector,
-                                                                            {simple::DrawMode::triangles,
+                                                                            {draw_mode,
                                                                              m_num_indices,
                                                                              simple::IndexType::unsigned_int,
                                                                              m_index_buffer_offset});
     }
+
+    simple::DrawMode draw_mode = simple::DrawMode::triangles;
 
 private:
     HeightmapComputeShader m_compute_shader;
@@ -586,6 +590,16 @@ private:
     SP::CachedUniform <uint> m_low_color{m_program.getUniformLocation("u_color_palette_low")};
 };
 
+nlohmann::json loadHeightmapConfig(const std::filesystem::path &path)
+{
+    std::ifstream ifstream{path};
+
+    if (!ifstream.is_open())
+        throw std::runtime_error("couldn't open heightmap config file: " + path.native());
+
+    return nlohmann::json::parse(ifstream);
+}
+
 int main()
 {
     GLFW::InitGuard glfw_init;
@@ -595,20 +609,20 @@ int main()
 
     GL::enableDebugCallback();
 
+    const std::filesystem::path assets_folder{"assets/"};
+
+    const auto heightmap_config = loadHeightmapConfig(assets_folder / "heightmap.json");
+
     ImGuiContextWrapper imgui_context;
     ImGuiImplWrapper imgui_imp{window.get(), true};
 
     simple::Renderer renderer;
 
-    constexpr glm::vec3 world_size = {1000, 1000, 100};
-
     Camera camera{window};
     {
         auto &camera_controller = camera.getController();
-        camera_controller.setMaxPosition(world_size * glm::vec3(1., 1., .25));
         camera_controller.setMaxRadius(350.f);
         camera_controller.setRadius(250.f);
-        camera_controller.setPosition(world_size / 2.f);
         camera_controller.setRadialSpeed(10.f);
         camera_controller.setAngle({glm::pi<float>() / 4., glm::pi<float>() / 4.});
     }
@@ -625,7 +639,7 @@ int main()
     constexpr GLuint heightmap_texture_unit = 1;
 
     PhongShader phong_shader;
-    phong_shader.lightPosition() = {0, 0, 1000};
+    phong_shader.lightPosition() = {0, 0, 10000};
     phong_shader.lightColor() = {1., 1., 1.};
     phong_shader.ambientLightIntensity() = .4f;
     phong_shader.specularLightIntensity() = .05f;
@@ -654,11 +668,25 @@ int main()
     placement::PlacementPipeline pipeline;
     pipeline.setBaseTextureUnit(glm::max(heightmap_texture_unit, color_texture_unit) + 1);
 
-    auto current_heightmap_iter = grayscale_textures.find("heightmap");
-    if (current_heightmap_iter == grayscale_textures.end())
-        current_heightmap_iter = grayscale_textures.begin();
+    auto current_heightmap_iter = grayscale_textures.find(heightmap_config["file"].get<std::filesystem::path>().stem());
 
-    placement::WorldData world_data{{1000, 1000, 100}, current_heightmap_iter->second.getGLObject().getName()};
+    if (current_heightmap_iter == grayscale_textures.end())
+    {
+        std::cerr << "heightmap file (assets/" << heightmap_config["file"].get<std::string>() << ") is missing\n";
+        return 1;
+    }
+
+    placement::WorldData world_data{/*scale=*/{1, 1, 1},
+            /*heightmap=*/current_heightmap_iter->second.getGLObject().getName()};
+
+    world_data.scale.z = heightmap_config["max elevation"].get<float>() - heightmap_config["min elevation"].get<float>();
+    world_data.scale.x = world_data.scale.z / heightmap_config["z/x scale"].get<float>();
+    world_data.scale.y = world_data.scale.x *
+            float(current_heightmap_iter->second.getSize().y) / float(current_heightmap_iter->second.getSize().x);
+
+    camera.getController().setMaxPosition(world_data.scale);
+    camera.getController().setMaxRadius(world_data.scale.z * 0.5f);
+    camera.getController().setPosition(world_data.scale * glm::vec3 {.5, .5, .125});
 
     // trees
     const auto tree_mesh_data = loadFromFolder("assets/meshes/trees", loadOBJ);
@@ -712,10 +740,42 @@ int main()
         }
     }
 
+    struct
+    {
+        [[nodiscard]] constexpr std::pair<glm::vec2, glm::vec2> getPlacementBounds() const
+        {
+            const glm::vec2 center {current_cell};
+            const glm::vec2 delta {cell_vicinity};
+            return {(center - delta) * cell_size, (center + delta) * cell_size};
+        }
+
+        bool updatePosition(glm::vec2 current_position)
+        {
+            const glm::uvec2 cell {current_position / cell_size};
+            if (cell == current_cell)
+                return false;
+            current_cell = cell;
+            return true;
+        }
+
+        float cell_size{100.f};
+        glm::uvec2 current_cell{0, 0};
+        glm::uvec2 cell_vicinity{3, 3};
+    } placement_grid;
+
+    glm::mat4 placement_transform {1.f};
+
     const auto dispatchPlacementCompute = [&]()
     {
-        tree_placement_group.computePlacement(pipeline, world_data, {0, 0}, world_size);
-        stone_placement_group.computePlacement(pipeline, world_data, {0, 0}, world_size);
+        const auto [lower_bound, upper_bound] = placement_grid.getPlacementBounds();
+
+        const glm::vec2 xy_scale = world_data.scale;
+        tree_placement_group.computePlacement(pipeline, world_data, glm::max(lower_bound, {0, 0}),
+                                              glm::min(upper_bound, xy_scale));
+        stone_placement_group.computePlacement(pipeline, world_data, glm::max(lower_bound, {0, 0}),
+                                               glm::min(upper_bound, xy_scale));
+
+        placement_transform = glm::translate(glm::mat4(1), {lower_bound, 0});
     };
 
     dispatchPlacementCompute();
@@ -723,13 +783,13 @@ int main()
     // terrain
     TerrainMesh terrain_mesh;
     GL::Texture::bindTextureUnit(heightmap_texture_unit, current_heightmap_iter->second.getGLObject());
-
+    glm::uvec2 terrain_resolution = current_heightmap_iter->second.getSize() / 8u;
     const auto dispatchTerrainCompute = [&]()
-    { terrain_mesh.generate({64, 64}, heightmap_texture_unit); };
+    { terrain_mesh.generate(terrain_resolution, heightmap_texture_unit); };
 
     dispatchTerrainCompute();
 
-    const auto terrain_transform{glm::scale(glm::mat4(1), world_size)};
+    const auto terrain_transform{glm::scale(glm::mat4(1), world_data.scale)};
 
     TerrainPhongShader terrain_shader;
     terrain_shader.colorTexUnit() = color_texture_unit;
@@ -760,13 +820,24 @@ int main()
 
         camera.getController().update(frame_delta.count());
 
+        auto camera_position = camera.getController().getPosition();
+
+        if (placement_grid.updatePosition(camera_position))
+            dispatchPlacementCompute();
+
         terrain_shader.setViewPosition(phong_shader.viewPosition() = camera.getController().getCameraPosition());
 
         if (ImGui::Begin("Settings"))
         {
             ImGui::Text("Frame time: %fs.\nFPS: %f", frame_delta.count(), 1. / frame_delta.count());
 
+            ImGui::Separator();
+
             ImGui::PushItemWidth(ImGui::GetWindowWidth() * .5f);
+
+            if (ImGui::DragFloat3("Position", glm::value_ptr(camera_position)))
+                camera.getController().setPosition(camera_position);
+
             if (ImGui::CollapsingHeader("Lighting"))
             {
                 // light position
@@ -796,17 +867,6 @@ int main()
                     if (ImGui::DragFloat("Specular light intensity", &specular_light, 0.05, 0., 1.))
                         terrain_shader.setSpecularLightIntensity(
                                 phong_shader.specularLightIntensity() = specular_light);
-                }
-
-                // terrain color
-                {
-                    ImGui::Text("Terrain color palette indices");
-                    glm::ivec2 terrain_color_indices {terrain_shader.lowColorIndex(), terrain_shader.highColorIndex()};
-                    if (ImGui::DragInt2("Low/High", glm::value_ptr(terrain_color_indices), .5, 0, 48))
-                    {
-                        terrain_shader.lowColorIndex() = terrain_color_indices.x;
-                        terrain_shader.highColorIndex() = terrain_color_indices.y;
-                    }
                 }
             }
 
@@ -853,6 +913,17 @@ int main()
             {
                 ImGui::BeginChild("Placement");
 
+                ImGui::Text("Current grid cell: x=%d, y=%d",
+                            placement_grid.current_cell.x,
+                            placement_grid.current_cell.y);
+
+                ImGui::DragFloat("Grid cell size", &placement_grid.cell_size, 10, 1, FLT_MAX, "%.1f");
+
+                ImGui::DragInt2("Placement area", reinterpret_cast<int*>(glm::value_ptr(placement_grid.cell_vicinity)),
+                                1, 0, INT_MAX);
+
+                ImGui::Separator();
+
                 ImGui::Text("World Data\nScale: %fx x %fy x %fz",
                             world_data.scale.x, world_data.scale.y, world_data.scale.z);
 
@@ -896,6 +967,24 @@ int main()
                 ImGui::EndChild();
             }
 
+            if (ImGui::CollapsingHeader("Terrain"))
+            {
+                if (ImGui::DragInt2("Terrain mesh resolution (x8)", reinterpret_cast<int*>(glm::value_ptr(terrain_resolution)),
+                                    1, 1, INT_MAX))
+                    dispatchTerrainCompute();
+
+                // terrain color
+                {
+                    ImGui::Text("Terrain color palette indices");
+                    glm::ivec2 terrain_color_indices{terrain_shader.lowColorIndex(), terrain_shader.highColorIndex()};
+                    if (ImGui::DragInt2("Low/High", glm::value_ptr(terrain_color_indices), .5, 0, 48))
+                    {
+                        terrain_shader.lowColorIndex() = terrain_color_indices.x;
+                        terrain_shader.highColorIndex() = terrain_color_indices.y;
+                    }
+                }
+            }
+
             ImGui::PopItemWidth();
         }
         ImGui::End();
@@ -913,6 +1002,7 @@ int main()
             if (mesh_opt)
                 renderer.draw(mesh_opt->getMesh(), phong_shader.getRendererProgram(), glm::mat4(1.f));
 
+        terrain_mesh.draw_mode = glfwGetKey(window.get(), GLFW_KEY_SPACE) == GLFW_PRESS ? simple::DrawMode::lines : simple::DrawMode::triangles;
         renderer.draw(terrain_mesh, terrain_shader.getRendererProgram(), terrain_transform);
 
         renderer.finishFrame(camera.getRendererCamera());
