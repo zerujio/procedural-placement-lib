@@ -12,6 +12,8 @@
 #include <ostream>
 #include <algorithm>
 #include <map>
+#include <execution>
+#include <thread>
 
 // included here to make it available to catch.hpp
 #include "ostream_operators.hpp"
@@ -208,7 +210,7 @@ struct Difference
 };
 
 template<typename LArray, typename RArray>
-[[nodiscard]] auto findDifferences(const LArray& l_array, const RArray& r_array)
+[[nodiscard]] auto findDifferences(const LArray &l_array, const RArray &r_array)
 {
     if (std::size(l_array) != std::size(r_array))
         throw std::logic_error("attempt to diff arrays of different size");
@@ -217,8 +219,8 @@ template<typename LArray, typename RArray>
 
     for (std::size_t i = 0; i < std::size(l_array); i++)
     {
-        const auto& l = l_array[i];
-        const auto& r = r_array[i];
+        const auto &l = l_array[i];
+        const auto &r = r_array[i];
         if (!(l == r))
             diffs.emplace_back(i, l, r);
     }
@@ -554,7 +556,7 @@ TEST_CASE("PlacementPipeline (multiclass)", "[pipeline][multiclass]")
 
     SECTION("Determinism")
     {
-        const auto sort_result = [](const Result& result)
+        const auto sort_result = [](const Result &result)
         {
             auto elements = result.copyAllToHost();
             std::sort(elements.begin(), elements.end(), elementCompare);
@@ -1294,4 +1296,217 @@ TEST_CASE("SSBO alignment")
         for (int i = 0; i < num_elements; i++)
             CHECK(glm::vec3(results[i]) == glm::vec3(i));
     }
+}
+
+using WorkGroupPattern =
+        std::array<std::array<glm::vec2, GenerationKernel::work_group_size.y>, GenerationKernel::work_group_size.x>;
+
+std::pair<glm::vec2, WorkGroupPattern> generateWorkGroupPattern(uint seed)
+{
+    constexpr auto wg_size = GenerationKernel::work_group_size;
+
+    DiskDistributionGenerator generator{1.0f, wg_size * 2u};
+    generator.setSeed(seed);
+    generator.setMaxAttempts(100);
+
+    std::array<std::array<glm::vec2, wg_size.y>, wg_size.x> positions;
+    for (auto &column: positions)
+        for (auto &cell: column)
+            cell = generator.generate();
+
+    return {generator.getGrid().getBounds(), positions};
+}
+
+template<class ExecutionPolicy>
+[[nodiscard]]
+std::vector<Result::Element> computePlacement(const ExecutionPolicy &policy,
+                                              const WorldData &world_data, const LayerData &layer_data,
+                                              glm::vec2 lower_bound, glm::vec2 upper_bound,
+                                              glm::vec2 work_group_bounds, WorkGroupPattern work_group_pattern)
+{
+    const glm::vec2 work_group_footprint{work_group_bounds * layer_data.footprint};
+    const glm::vec2 base_offset{lower_bound / work_group_footprint};
+    const glm::uvec2 num_work_groups{glm::uvec2((upper_bound - lower_bound) / work_group_footprint) + 1u};
+
+    const glm::uvec2 wg_size{work_group_pattern.size(), work_group_pattern.front().size()};
+
+    constexpr uint invalid_index = -1u;
+
+    std::vector<Result::Element> candidates;
+    candidates.resize(num_work_groups.x * num_work_groups.y * wg_size.x * wg_size.y, {{0, 0, 0}, invalid_index});
+
+    std::vector<float> acc_density;
+    acc_density.resize(candidates.size());
+
+    std::vector<glm::uvec2> work_group_indices;
+    for (uint i = 0; i < num_work_groups.x; i++)
+        for (uint j = 0; j < num_work_groups.y; j++)
+            work_group_indices.emplace_back(i, j);
+
+    std::vector<glm::uvec2> invocation_indices;
+    for (uint i = 0; i < work_group_pattern.size(); i++)
+        for (uint j = 0; j < work_group_pattern.front().size(); j++)
+            invocation_indices.emplace_back(i, j);
+
+    std::for_each(policy, work_group_indices.cbegin(), work_group_indices.cend(),
+                  [&, work_group_footprint, base_offset, num_work_groups, wg_size](glm::uvec2 wg_id)
+                  {
+                      const uint wg_array_index = (wg_id.x * num_work_groups.y + wg_id.y) * wg_size.x * wg_size.y;
+                      const glm::vec2 wg_offset = base_offset + glm::vec2(wg_id) * work_group_footprint;
+
+                      std::for_each(policy, invocation_indices.cbegin(), invocation_indices.cend(),
+                                    [&, wg_array_index, wg_offset](glm::uvec2 inv_id)
+                                    {
+                                        const uint inv_array_index = wg_array_index + inv_id.x * wg_size.y + inv_id.y;
+                                        const glm::vec2 inv_position =
+                                                wg_offset + work_group_pattern[inv_id.x][inv_id.y];
+
+                                        auto &candidate = candidates[inv_array_index];
+                                        candidate.position = {inv_position, 0};
+
+                                        if (glm::any(glm::lessThan(glm::vec2(candidate.position), lower_bound)) ||
+                                            glm::any(glm::greaterThanEqual(glm::vec2(candidate.position), upper_bound)))
+                                            return;
+
+                                        for (uint i; i < layer_data.densitymaps.size(); i++)
+                                        {
+                                            const auto &d_map = layer_data.densitymaps[i];
+                                            const float layer_density = glm::clamp(d_map.scale + d_map.offset,
+                                                                                   d_map.min_value, d_map.max_value);
+                                            const auto threshold = EvaluationKernel::default_dithering_matrix[inv_id.x][inv_id
+                                                    .y];
+
+                                            if ((acc_density[inv_array_index] += layer_density) > threshold)
+                                            {
+                                                candidate.class_index = i;
+                                                return;
+                                            }
+                                        }
+                                    });
+                  });
+
+    std::sort(policy, candidates.begin(), candidates.end(),
+              [](const Result::Element &l, const Result::Element &r)
+              { return l.class_index < r.class_index; });
+
+    return candidates;
+}
+
+TEST_CASE("Benchmarks")
+{
+    placement::WorldData world_data{{10000, 10000, 1.f},
+                                    s_texture_loader["assets/textures/grayscale/heightmap.png"]};
+
+    const auto layer_random = GENERATE(take(1, chunk(20, random(0.5f, 1.5f))));
+
+    placement::LayerData layer_data{1.f};
+    for (uint i = 0; i < 10; i++)
+    {
+        auto &dm = layer_data.densitymaps.emplace_back();
+        dm.scale = layer_random[i * 2];
+        dm.offset = layer_random[i * 2 + 1];
+        dm.texture = s_texture_loader["assets/textures/grayscale/heightmap.png"];
+    }
+
+    const uint seed = 0;
+    const auto work_group_pattern = generateWorkGroupPattern(seed);
+
+    const auto single_thread_placement = [&](glm::vec2 upper_bound)
+    {
+        auto result = computePlacement(std::execution::seq, world_data, layer_data, {0, 0}, upper_bound,
+                                       work_group_pattern.first, work_group_pattern.second);
+        CHECK(!result.empty());
+        return result;
+    };
+
+    BENCHMARK("10x10 Single-thread CPU placement")
+                { return single_thread_placement({10, 10}); };
+    BENCHMARK("100x100 Single-thread CPU placement")
+                { return single_thread_placement({100, 100}); };
+    BENCHMARK("1000x1000 Single-thread CPU placement")
+                { return single_thread_placement({1000, 1000}); };
+
+#ifdef PLACEMENT_BENCHMARK_MULTITHREAD
+    const auto multi_thread_placement = [&](float bounds)
+    {
+        auto result = computePlacement(std::execution::par_unseq, world_data, layer_data, {0, 0}, {bounds, bounds},
+                                       work_group_pattern.first, work_group_pattern.second);
+        CHECK(!result.empty());
+        return result;
+    };
+
+    BENCHMARK("10x10 Multi-thread CPU placement")
+                { return multi_thread_placement(10); };
+    BENCHMARK("100x100 Multi-thread CPU placement")
+                { return multi_thread_placement(100); };
+    BENCHMARK("1000x1000 Multi-thread CPU placement")
+                { return multi_thread_placement(1000); };
+#endif
+
+    placement::PlacementPipeline pipeline;
+    pipeline.setRandomSeed(seed);
+
+    const auto dispatch_gpu_placement = [&](float bounds)
+    {
+        return pipeline.computePlacement(world_data, layer_data, {0, 0}, {bounds, bounds});
+    };
+
+    BENCHMARK("10x10 GPU placement dispatch") { return dispatch_gpu_placement(10); };
+    BENCHMARK("100x100 GPU placement dispatch") { return dispatch_gpu_placement(100); };
+    BENCHMARK("1000x1000 GPU placement dispatch") { return dispatch_gpu_placement(1000); };
+
+    const auto gpu_placement = [&](float bounds)
+    {
+        auto result = dispatch_gpu_placement(bounds).readResult();
+        CHECK(result.getElementArrayLength() > 0);
+        return result;
+    };
+
+    BENCHMARK("10x10 GPU placement")
+                { return gpu_placement(10); };
+    BENCHMARK("100x100 GPU placement")
+                { return gpu_placement(100); };
+    BENCHMARK("1000x1000 GPU placement")
+                { return gpu_placement(1000); };
+
+    const auto poisson_placement = [&](float bounds)
+    {
+        DiskDistributionGenerator disk_generator{layer_data.footprint,
+                                                 glm::vec2(bounds) * glm::sqrt(2.f) / layer_data.footprint};
+
+        const auto bounds_approx = Approx(bounds).margin(layer_data.footprint / glm::sqrt(2.f));
+        CHECK(disk_generator.getGrid().getBounds().x == bounds_approx);
+        CHECK(disk_generator.getGrid().getBounds().y == bounds_approx);
+
+        std::default_random_engine layer_gen(seed);
+        std::uniform_int_distribution<uint> layer_dist(0, layer_data.densitymaps.size() - 1);
+
+        std::vector<Result::Element> elements;
+
+        const auto work_group_linear_density =
+                glm::vec2(GenerationKernel::work_group_size) / work_group_pattern.first;
+        const auto expected_elements_by_axis = work_group_linear_density * glm::vec2(world_data.scale);
+        const std::size_t expected_elements = expected_elements_by_axis.x * expected_elements_by_axis.y;
+
+        elements.reserve(expected_elements);
+
+        try
+        {
+            while (elements.size() < expected_elements)
+                elements.push_back({glm::vec3(disk_generator.generate(), 0), layer_dist(layer_gen)});
+        }
+        catch (std::exception &e)
+        { /* ... */ }
+
+        return elements;
+    };
+
+    BENCHMARK("10x10 Poisson placement")
+                { poisson_placement(10); };
+    BENCHMARK("100x100 Poisson placement")
+                { poisson_placement(100); };
+    BENCHMARK("1000x1000 Poisson placement")
+                { poisson_placement(1000); };
+
+    SUCCEED("Benchmarks finished");
 }
