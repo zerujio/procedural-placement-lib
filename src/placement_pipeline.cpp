@@ -25,10 +25,8 @@ ResultBuffer PlacementPipeline::s_makeResultBuffer(uint candidate_count, uint cl
 
     const auto size = class_count * uint_size + candidate_count * result_element_size;
 
-    const std::vector<std::byte> buffer_initializer(size); // a buffer of null bytes
-
     GL::Buffer buffer;
-    buffer.allocateImmutable(size, GL::Buffer::StorageFlags::map_read, buffer_initializer.data());
+    buffer.allocateImmutable(size, GL::Buffer::StorageFlags::map_read, nullptr);
     gl.ClearNamedBufferSubData(buffer.getName(), GL_R8, 0, class_count * uint_size, GL_RED, GL_UNSIGNED_BYTE, nullptr);
 
     return {class_count, size, std::move(buffer)};
