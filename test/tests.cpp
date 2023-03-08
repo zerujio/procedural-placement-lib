@@ -1,5 +1,6 @@
 #include "placement/placement.hpp"
 #include "placement/placement_pipeline.hpp"
+
 #include "../src/disk_distribution_generator.hpp"
 
 #include "glutils/debug.hpp"
@@ -1317,12 +1318,41 @@ std::pair<glm::vec2, WorkGroupPattern> generateWorkGroupPattern(uint seed)
     return {generator.getGrid().getBounds(), positions};
 }
 
+struct GrayscaleImage
+{
+public:
+    explicit GrayscaleImage(const char *filename)
+            : m_data(stbi_load(filename, &m_size.x, &m_size.y, nullptr, 1), stbi_image_free)
+    {
+        if (!m_data)
+            throw std::runtime_error(stbi_failure_reason());
+    }
+
+    [[nodiscard]]
+    glm::ivec2 getSize() const
+    { return m_size; }
+
+    [[nodiscard]]
+    float sample(glm::vec2 tex_coord) const
+    {
+        const glm::ivec2 pixel_index = glm::clamp(tex_coord, {0, 0}, {1, 1}) * glm::vec2(m_size);
+        const stbi_uc value = m_data[pixel_index.y * m_size.x + pixel_index.x];
+        return static_cast<float>(value) / static_cast<float>(std::numeric_limits<stbi_uc>::max());
+    }
+
+private:
+    glm::ivec2 m_size{0};
+    std::unique_ptr<stbi_uc[], void (*)(void *)> m_data;
+};
+
 template<class ExecutionPolicy>
 [[nodiscard]]
 std::vector<Result::Element> computePlacement(const ExecutionPolicy &policy,
                                               const WorldData &world_data, const LayerData &layer_data,
                                               glm::vec2 lower_bound, glm::vec2 upper_bound,
-                                              glm::vec2 work_group_bounds, WorkGroupPattern work_group_pattern)
+                                              glm::vec2 work_group_bounds, WorkGroupPattern work_group_pattern,
+                                              const GrayscaleImage &heightmap,
+                                              const std::vector<const GrayscaleImage*> &densitymaps)
 {
     const glm::vec2 work_group_footprint{work_group_bounds * layer_data.footprint};
     const glm::vec2 base_offset{lower_bound / work_group_footprint};
@@ -1361,8 +1391,10 @@ std::vector<Result::Element> computePlacement(const ExecutionPolicy &policy,
                                         const glm::vec2 inv_position =
                                                 wg_offset + work_group_pattern[inv_id.x][inv_id.y];
 
+                                        const glm::vec2 candidate_uv{inv_position / glm::vec2(world_data.scale)};
+
                                         auto &candidate = candidates[inv_array_index];
-                                        candidate.position = {inv_position, 0};
+                                        candidate.position = {inv_position, heightmap.sample(candidate_uv)};
 
                                         if (glm::any(glm::lessThan(glm::vec2(candidate.position), lower_bound)) ||
                                             glm::any(glm::greaterThanEqual(glm::vec2(candidate.position), upper_bound)))
@@ -1371,10 +1403,13 @@ std::vector<Result::Element> computePlacement(const ExecutionPolicy &policy,
                                         for (uint i; i < layer_data.densitymaps.size(); i++)
                                         {
                                             const auto &d_map = layer_data.densitymaps[i];
-                                            const float layer_density = glm::clamp(d_map.scale + d_map.offset,
+
+                                            const float layer_density = glm::clamp(densitymaps[i]->sample(candidate_uv)
+                                                                                   * d_map.scale + d_map.offset,
                                                                                    d_map.min_value, d_map.max_value);
-                                            const auto threshold = EvaluationKernel::default_dithering_matrix[inv_id.x][inv_id
-                                                    .y];
+
+                                            const auto threshold =
+                                                    EvaluationKernel::default_dithering_matrix[inv_id.x][inv_id.y];
 
                                             if ((acc_density[inv_array_index] += layer_density) > threshold)
                                             {
@@ -1394,10 +1429,15 @@ std::vector<Result::Element> computePlacement(const ExecutionPolicy &policy,
 
 TEST_CASE("Benchmarks")
 {
-    placement::WorldData world_data{{10000, 10000, 1.f},
-                                    s_texture_loader["assets/textures/grayscale/heightmap.png"]};
+    constexpr auto heightmap_filename = "assets/textures/grayscale/heightmap.png";
+
+    placement::WorldData world_data{{10000, 10000, 1.f}, s_texture_loader[heightmap_filename]};
+
+    const GrayscaleImage heightmap_image {heightmap_filename};
 
     const auto layer_random = GENERATE(take(1, chunk(20, random(0.5f, 1.5f))));
+
+    constexpr auto densitymap_filename = "assets/textures/grayscale/radial_gradient.png";
 
     placement::LayerData layer_data{1.f};
     for (uint i = 0; i < 10; i++)
@@ -1405,8 +1445,12 @@ TEST_CASE("Benchmarks")
         auto &dm = layer_data.densitymaps.emplace_back();
         dm.scale = layer_random[i * 2];
         dm.offset = layer_random[i * 2 + 1];
-        dm.texture = s_texture_loader["assets/textures/grayscale/heightmap.png"];
+        dm.texture = s_texture_loader[densitymap_filename];
     }
+
+    const GrayscaleImage densitymap_image {densitymap_filename};
+    std::vector<const GrayscaleImage*> densitymaps;
+    densitymaps.resize(layer_data.densitymaps.size(), &densitymap_image);
 
     const uint seed = 0;
     const auto work_group_pattern = generateWorkGroupPattern(seed);
@@ -1414,7 +1458,8 @@ TEST_CASE("Benchmarks")
     const auto single_thread_placement = [&](glm::vec2 upper_bound)
     {
         auto result = computePlacement(std::execution::seq, world_data, layer_data, {0, 0}, upper_bound,
-                                       work_group_pattern.first, work_group_pattern.second);
+                                       work_group_pattern.first, work_group_pattern.second,
+                                       heightmap_image, densitymaps);
         CHECK(!result.empty());
         return result;
     };
@@ -1430,7 +1475,8 @@ TEST_CASE("Benchmarks")
     const auto multi_thread_placement = [&](float bounds)
     {
         auto result = computePlacement(std::execution::par_unseq, world_data, layer_data, {0, 0}, {bounds, bounds},
-                                       work_group_pattern.first, work_group_pattern.second);
+                                       work_group_pattern.first, work_group_pattern.second,
+                                       heightmap_image, densitymaps);
         CHECK(!result.empty());
         return result;
     };
@@ -1451,9 +1497,12 @@ TEST_CASE("Benchmarks")
         return pipeline.computePlacement(world_data, layer_data, {0, 0}, {bounds, bounds});
     };
 
-    BENCHMARK("10x10 GPU placement dispatch") { return dispatch_gpu_placement(10); };
-    BENCHMARK("100x100 GPU placement dispatch") { return dispatch_gpu_placement(100); };
-    BENCHMARK("1000x1000 GPU placement dispatch") { return dispatch_gpu_placement(1000); };
+    BENCHMARK("10x10 GPU placement dispatch")
+                { return dispatch_gpu_placement(10); };
+    BENCHMARK("100x100 GPU placement dispatch")
+                { return dispatch_gpu_placement(100); };
+    BENCHMARK("1000x1000 GPU placement dispatch")
+                { return dispatch_gpu_placement(1000); };
 
     const auto gpu_placement = [&](float bounds)
     {
