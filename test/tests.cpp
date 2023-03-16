@@ -1455,107 +1455,136 @@ TEST_CASE("Benchmark", "[.][benchmark]")
     const uint seed = 0;
     const auto work_group_pattern = generateWorkGroupPattern(seed);
 
-    const auto single_thread_placement = [&](glm::vec2 upper_bound)
+    SECTION("CPU single-thread")
     {
-        auto result = computePlacement(std::execution::seq, world_data, layer_data, {0, 0}, upper_bound,
-                                       work_group_pattern.first, work_group_pattern.second,
-                                       heightmap_image, densitymaps);
-        CHECK(!result.empty());
-        return result;
-    };
+        const auto single_thread_placement = [&](glm::vec2 upper_bound)
+        {
+            auto result = computePlacement(std::execution::seq, world_data, layer_data, {0, 0}, upper_bound,
+                                           work_group_pattern.first, work_group_pattern.second,
+                                           heightmap_image, densitymaps);
+            CHECK(!result.empty());
+            return result;
+        };
 
-    BENCHMARK("10x10 Single-thread CPU placement")
-                { return single_thread_placement({10, 10}); };
-    BENCHMARK("100x100 Single-thread CPU placement")
-                { return single_thread_placement({100, 100}); };
-    BENCHMARK("1000x1000 Single-thread CPU placement")
-                { return single_thread_placement({1000, 1000}); };
+        BENCHMARK("10x10 Single-thread CPU placement")
+                    { return single_thread_placement({10, 10}); };
+        BENCHMARK("100x100 Single-thread CPU placement")
+                    { return single_thread_placement({100, 100}); };
+        BENCHMARK("500x500 Single-thread CPU placement")
+                    { return single_thread_placement({500, 500}); };
+        BENCHMARK("1000x1000 Single-thread CPU placement")
+                    { return single_thread_placement({1000, 1000}); };
+
+        SUCCEED("CPU single-thread benchmark finished");
+    }
 
 #ifdef PLACEMENT_BENCHMARK_MULTITHREAD
-    const auto multi_thread_placement = [&](float bounds)
+    SECTION("CPU multi-thread")
     {
-        auto result = computePlacement(std::execution::par_unseq, world_data, layer_data, {0, 0}, {bounds, bounds},
-                                       work_group_pattern.first, work_group_pattern.second,
-                                       heightmap_image, densitymaps);
-        CHECK(!result.empty());
-        return result;
-    };
+        const auto multi_thread_placement = [&](float bounds)
+        {
+            auto result = computePlacement(std::execution::par_unseq, world_data, layer_data, {0, 0}, {bounds, bounds},
+                                           work_group_pattern.first, work_group_pattern.second,
+                                           heightmap_image, densitymaps);
+            CHECK(!result.empty());
+            return result;
+        };
 
-    BENCHMARK("10x10 Multi-thread CPU placement")
-                { return multi_thread_placement(10); };
-    BENCHMARK("100x100 Multi-thread CPU placement")
-                { return multi_thread_placement(100); };
-    BENCHMARK("1000x1000 Multi-thread CPU placement")
-                { return multi_thread_placement(1000); };
+        BENCHMARK("10x10 Multi-thread CPU placement")
+                    { return multi_thread_placement(10); };
+        BENCHMARK("100x100 Multi-thread CPU placement")
+                    { return multi_thread_placement(100); };
+        BENCHMARK("500x500 Multi-thread CPU placement")
+                    { return multi_thread_placement(500); };
+        BENCHMARK("1000x1000 Multi-thread CPU placement")
+                    { return multi_thread_placement(1000); };
+
+        SUCCEED("CPU multi-thread benchmark finished");
+    }
 #endif
 
-    placement::PlacementPipeline pipeline;
-    pipeline.setRandomSeed(seed);
-
-    const auto dispatch_gpu_placement = [&](float bounds)
+    SECTION("GPU")
     {
-        return pipeline.computePlacement(world_data, layer_data, {0, 0}, {bounds, bounds});
-    };
+        placement::PlacementPipeline pipeline;
+        pipeline.setRandomSeed(seed);
 
-    BENCHMARK("10x10 GPU placement dispatch")
-                { return dispatch_gpu_placement(10); };
-    BENCHMARK("100x100 GPU placement dispatch")
-                { return dispatch_gpu_placement(100); };
-    BENCHMARK("1000x1000 GPU placement dispatch")
-                { return dispatch_gpu_placement(1000); };
-
-    const auto gpu_placement = [&](float bounds)
-    {
-        auto result = dispatch_gpu_placement(bounds).readResult();
-        CHECK(result.getElementArrayLength() > 0);
-        return result;
-    };
-
-    BENCHMARK("10x10 GPU placement")
-                { return gpu_placement(10); };
-    BENCHMARK("100x100 GPU placement")
-                { return gpu_placement(100); };
-    BENCHMARK("1000x1000 GPU placement")
-                { return gpu_placement(1000); };
-
-    const auto poisson_placement = [&](float bounds)
-    {
-        DiskDistributionGenerator disk_generator{layer_data.footprint,
-                                                 glm::vec2(bounds) * glm::sqrt(2.f) / layer_data.footprint};
-
-        const auto bounds_approx = Approx(bounds).margin(layer_data.footprint / glm::sqrt(2.f));
-        CHECK(disk_generator.getGrid().getBounds().x == bounds_approx);
-        CHECK(disk_generator.getGrid().getBounds().y == bounds_approx);
-
-        std::default_random_engine layer_gen(seed);
-        std::uniform_int_distribution<uint> layer_dist(0, layer_data.densitymaps.size() - 1);
-
-        std::vector<Result::Element> elements;
-
-        const auto work_group_linear_density =
-                glm::vec2(GenerationKernel::work_group_size) / work_group_pattern.first;
-        const auto expected_elements_by_axis = work_group_linear_density * glm::vec2(world_data.scale);
-        const std::size_t expected_elements = expected_elements_by_axis.x * expected_elements_by_axis.y;
-
-        elements.reserve(expected_elements);
-
-        try
+        const auto dispatch_gpu_placement = [&](float bounds)
         {
-            while (elements.size() < expected_elements)
-                elements.push_back({glm::vec3(disk_generator.generate(), 0), layer_dist(layer_gen)});
-        }
-        catch (std::exception &e)
-        { /* ... */ }
+            return pipeline.computePlacement(world_data, layer_data, {0, 0}, {bounds, bounds});
+        };
 
-        return elements;
-    };
+        BENCHMARK("10x10 GPU placement dispatch")
+                    { return dispatch_gpu_placement(10); };
+        BENCHMARK("100x100 GPU placement dispatch")
+                    { return dispatch_gpu_placement(100); };
+        BENCHMARK("500x500 GPU placement dispatch")
+                    { return dispatch_gpu_placement(500); };
+        BENCHMARK("1000x1000 GPU placement dispatch")
+                    { return dispatch_gpu_placement(1000); };
 
-    BENCHMARK("10x10 Poisson placement")
-                { poisson_placement(10); };
-    BENCHMARK("100x100 Poisson placement")
-                { poisson_placement(100); };
-    BENCHMARK("1000x1000 Poisson placement")
-                { poisson_placement(1000); };
+        const auto gpu_placement = [&](float bounds)
+        {
+            auto future_result = dispatch_gpu_placement(bounds);
+            return future_result.wait(std::chrono::nanoseconds::max());
+        };
+
+        BENCHMARK("10x10 GPU placement")
+                    { return gpu_placement(10); };
+        BENCHMARK("100x100 GPU placement")
+                    { return gpu_placement(100); };
+        BENCHMARK("500x500 GPU placement")
+                    { return gpu_placement(500); };
+        BENCHMARK("1000x1000 GPU placement")
+                    { return gpu_placement(1000); };
+
+        SUCCEED("PlacementPipeline benchmark finished");
+    }
+
+    SECTION("CPU Poisson")
+    {
+        const auto poisson_placement = [&](float bounds)
+        {
+            DiskDistributionGenerator disk_generator{layer_data.footprint,
+                                                     glm::vec2(bounds) * glm::sqrt(2.f) / layer_data.footprint};
+
+            const auto bounds_approx = Approx(bounds).margin(layer_data.footprint / glm::sqrt(2.f));
+            CHECK(disk_generator.getGrid().getBounds().x == bounds_approx);
+            CHECK(disk_generator.getGrid().getBounds().y == bounds_approx);
+
+            std::default_random_engine layer_gen(seed);
+            std::uniform_int_distribution<uint> layer_dist(0, layer_data.densitymaps.size() - 1);
+
+            std::vector<Result::Element> elements;
+
+            const auto work_group_linear_density =
+                    glm::vec2(GenerationKernel::work_group_size) / work_group_pattern.first;
+            const auto expected_elements_by_axis = work_group_linear_density * glm::vec2(world_data.scale);
+            const std::size_t expected_elements = expected_elements_by_axis.x * expected_elements_by_axis.y;
+
+            elements.reserve(expected_elements);
+
+            try
+            {
+                while (elements.size() < expected_elements)
+                    elements.push_back({glm::vec3(disk_generator.generate(), 0), layer_dist(layer_gen)});
+            }
+            catch (std::exception &e)
+            { /* ... */ }
+
+            return elements;
+        };
+
+        BENCHMARK("10x10 Poisson placement")
+                    { poisson_placement(10); };
+        BENCHMARK("100x100 Poisson placement")
+                    { poisson_placement(100); };
+        BENCHMARK("500x500 Poisson placement")
+                    { poisson_placement(500); };
+        BENCHMARK("1000x1000 Poisson placement")
+                    { poisson_placement(1000); };
+
+        SUCCEED("Poisson");
+    }
 
     SUCCEED("Benchmarks finished");
 }
