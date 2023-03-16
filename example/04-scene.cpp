@@ -269,15 +269,23 @@ public:
                           glm::vec2 lower_bound, glm::vec2 upper_bound)
     {
         m_future_result = pipeline.computePlacement(world_data, m_layer_data, lower_bound, upper_bound);
+        m_start_time = std::chrono::steady_clock::now();
     }
 
-    void checkResult()
+    void checkResult(std::ostream& log)
     {
         if (!m_future_result || !m_future_result->isReady())
             return;
 
+        const auto pre_read = std::chrono::steady_clock::now();
+        const std::chrono::duration<float> pre_read_delta = pre_read - m_start_time;
+        log << "readResult()\n" << "pre_read=" << pre_read_delta.count() << "\n";
+
         m_result = m_future_result->readResult();
         m_future_result.reset();
+
+        const std::chrono::duration<float> post_read_delta = std::chrono::steady_clock::now() - pre_read;
+        log << "post_read=" << post_read_delta.count() << "\n";
 
         for (uint i = 0; i < m_result->getNumClasses(); i++)
         {
@@ -354,7 +362,10 @@ public:
         dm.max_value = layer_params.max_value;
     }
 
+    [[nodiscard]] const auto& getResult() const { return m_result; }
+
 private:
+    std::chrono::steady_clock::time_point m_start_time {};
     placement::LayerData m_layer_data;
     std::optional<placement::Result> m_result;
     std::optional<placement::FutureResult> m_future_result;
@@ -602,6 +613,16 @@ nlohmann::json loadHeightmapConfig(const std::filesystem::path &path)
 
 int main()
 {
+    std::ofstream log_file("04-scene.log");
+
+    if (!log_file.is_open())
+    {
+        std::cerr << "couldn't open log file\n";
+        return -1;
+    }
+
+    log_file << "frame_delta\n";
+
     GLFW::InitGuard glfw_init;
 
     glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
@@ -769,6 +790,9 @@ int main()
     {
         const auto [lower_bound, upper_bound] = placement_grid.getPlacementBounds();
 
+        log_file << "dispatchPlacementCompute(lower={" << lower_bound.x << ", " << lower_bound.y
+                 << "}, upper={" << upper_bound.x << ", " << upper_bound.y << "})\n";
+
         const glm::vec2 xy_scale = world_data.scale;
         tree_placement_group.computePlacement(pipeline, world_data, glm::max(lower_bound, {0, 0}),
                                               glm::min(upper_bound, xy_scale));
@@ -806,14 +830,16 @@ int main()
     while (!glfwWindowShouldClose(window.get()))
     {
         // check for pending results
-        tree_placement_group.checkResult();
-        stone_placement_group.checkResult();
+        tree_placement_group.checkResult(log_file);
+        stone_placement_group.checkResult(log_file);
 
         glfwPollEvents();
 
         const auto current_frame_start_time = std::chrono::steady_clock::now();
         const std::chrono::duration<float> frame_delta = current_frame_start_time - prev_frame_start_time;
         prev_frame_start_time = current_frame_start_time;
+
+        log_file << "frame_delta=" << frame_delta.count() << "\n";
 
         imgui_imp.newFrame();
         ImGui::NewFrame();
@@ -830,6 +856,11 @@ int main()
         if (ImGui::Begin("Settings"))
         {
             ImGui::Text("Frame time: %fs.\nFPS: %f", frame_delta.count(), 1. / frame_delta.count());
+
+            if (const auto &tree_result = tree_placement_group.getResult())
+                ImGui::Text("%d árboles", tree_result->getElementArrayLength());
+            if (const auto &stone_result = stone_placement_group.getResult())
+                ImGui::Text("%d rocas", stone_result->getElementArrayLength());
 
             ImGui::Separator();
 
@@ -1009,6 +1040,9 @@ int main()
 
         ImGui::Render();
         imgui_imp.renderDrawData(ImGui::GetDrawData());
+
+        const std::chrono::duration<float> frame_time = std::chrono::steady_clock::now() - current_frame_start_time;
+        log_file << "frame_time=" << frame_time.count() << "\n";
 
         glfwSwapBuffers(window.get());
     }
