@@ -34,4 +34,5 @@ add_custom_target(pplib-examples)
 add_dependencies(pplib-examples
         01-basic-placement
         02-basic-visualization
-        03-interactive-placement)
+        03-interactive-placement
+        04-scene)
