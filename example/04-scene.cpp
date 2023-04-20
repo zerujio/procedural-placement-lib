@@ -13,6 +13,95 @@
 #include <iostream>
 #include <filesystem>
 #include <fstream>
+#include <deque>
+
+class Log
+{
+public:
+    using Duration  = std::chrono::steady_clock::duration;
+    using Clock = std::chrono::steady_clock;
+
+    Log() : m_init_time(Clock::now())
+    {
+        m_frames.emplace_back(0, 0, 0);
+    }
+
+    Clock::duration startFrame()
+    {
+        const Duration start_time = now();
+        const auto [prev_start_time, _0, _1] = m_frames.back();
+        const Duration delta = start_time - prev_start_time;
+        m_frames.emplace_back(start_time, delta, Duration::zero());
+        return delta;
+    }
+
+    void endFrame()
+    {
+        auto& [start_time, _, duration] = m_frames.back();
+        duration = now() - start_time;
+    }
+
+    enum class ComputeType {Trees, Rocks};
+
+    void startCompute(ComputeType type)
+    {
+        auto& deque = type == ComputeType::Trees ? m_tree_compute : m_rock_compute;
+        deque.emplace_back(m_frames.size() - 1, 0);
+    }
+
+    void endCompute(ComputeType type)
+    {
+        auto& deque = type == ComputeType::Trees ? m_tree_compute : m_rock_compute;
+        auto& [_, end] = deque.back();
+        end = m_frames.size() - 1;
+    }
+
+    void writeOut(std::ostream& out) const
+    {
+        out << "frame_time=";
+        writeOutDurationArray<0>(out, m_frames);
+
+        out << "\nframe_delta=";
+        writeOutDurationArray<1>(out, m_frames);
+
+        out << "\nframe_cpu_time=";
+        writeOutDurationArray<2>(out, m_frames);
+
+        out << "\ntree_compute_start=";
+        writeOutIntArray<0>(out, m_tree_compute);
+
+        out << "\ntree_compute_end=";
+        writeOutIntArray<1>(out, m_tree_compute);
+
+        out << "\nrock_compute_start=";
+        writeOutIntArray<0>(out, m_rock_compute);
+
+        out << "\nrock_compute_end=";
+        writeOutIntArray<1>(out, m_rock_compute);
+    }
+
+private:
+    template<std::size_t N, typename Container>
+    void writeOutDurationArray(std::ostream& out, const Container& container) const
+    {
+        for (const auto& value : container)
+            out << std::get<N>(value).count() << ", ";
+    }
+
+    template<std::size_t N, typename Container>
+    void writeOutIntArray(std::ostream& out, const Container& container) const
+    {
+        for (const auto& value : container)
+            out << std::get<N>(value) << ",";
+    }
+
+    [[nodiscard]] Clock::duration now() const { return Clock::now() - m_init_time; }
+
+    Clock::time_point m_init_time;
+    std::deque<std::tuple<Duration, Duration, Duration>> m_frames;
+    std::deque<std::pair<std::size_t, std::size_t>> m_tree_compute;
+    std::deque<std::pair<std::size_t, std::size_t>> m_rock_compute;
+};
 
 constexpr glm::vec2 initial_window_size{1024, 768};
 
@@ -272,20 +361,13 @@ public:
         m_start_time = std::chrono::steady_clock::now();
     }
 
-    void checkResult(std::ostream& log)
+    bool checkResult()
     {
         if (!m_future_result || !m_future_result->isReady())
-            return;
-
-        const auto pre_read = std::chrono::steady_clock::now();
-        const std::chrono::duration<float> pre_read_delta = pre_read - m_start_time;
-        log << "readResult()\n" << "pre_read=" << pre_read_delta.count() << "\n";
+            return false;
 
         m_result = m_future_result->readResult();
         m_future_result.reset();
-
-        const std::chrono::duration<float> post_read_delta = std::chrono::steady_clock::now() - pre_read;
-        log << "post_read=" << post_read_delta.count() << "\n";
 
         for (uint i = 0; i < m_result->getNumClasses(); i++)
         {
@@ -295,6 +377,8 @@ public:
             else
                 mesh_opt = ResultMesh(m_iters[i].second->second, m_result.value(), i);
         }
+
+        return true;
     }
 
     [[nodiscard]]
@@ -621,12 +705,13 @@ int main()
         return -1;
     }
 
-    log_file << "frame_delta\n";
+    Log log;
 
     GLFW::InitGuard glfw_init;
 
     glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
     GLFW::Window window{"04 - Scene", initial_window_size};
+    glfwSwapInterval(0);
 
     GL::enableDebugCallback();
 
@@ -790,12 +875,13 @@ int main()
     {
         const auto [lower_bound, upper_bound] = placement_grid.getPlacementBounds();
 
-        log_file << "dispatchPlacementCompute(lower={" << lower_bound.x << ", " << lower_bound.y
-                 << "}, upper={" << upper_bound.x << ", " << upper_bound.y << "})\n";
-
         const glm::vec2 xy_scale = world_data.scale;
+
+        log.startCompute(Log::ComputeType::Trees);
         tree_placement_group.computePlacement(pipeline, world_data, glm::max(lower_bound, {0, 0}),
                                               glm::min(upper_bound, xy_scale));
+
+        log.startCompute(Log::ComputeType::Rocks);
         stone_placement_group.computePlacement(pipeline, world_data, glm::max(lower_bound, {0, 0}),
                                                glm::min(upper_bound, xy_scale));
 
@@ -826,20 +912,11 @@ int main()
     terrain_shader.lowColorIndex() = 12;
     terrain_shader.highColorIndex() = 16;
 
-    auto prev_frame_start_time = std::chrono::steady_clock::now();
     while (!glfwWindowShouldClose(window.get()))
     {
-        // check for pending results
-        tree_placement_group.checkResult(log_file);
-        stone_placement_group.checkResult(log_file);
-
         glfwPollEvents();
 
-        const auto current_frame_start_time = std::chrono::steady_clock::now();
-        const std::chrono::duration<float> frame_delta = current_frame_start_time - prev_frame_start_time;
-        prev_frame_start_time = current_frame_start_time;
-
-        log_file << "frame_delta=" << frame_delta.count() << "\n";
+        const std::chrono::duration<float> frame_delta = log.startFrame();
 
         imgui_imp.newFrame();
         ImGui::NewFrame();
@@ -852,6 +929,9 @@ int main()
             dispatchPlacementCompute();
 
         terrain_shader.setViewPosition(phong_shader.viewPosition() = camera.getController().getCameraPosition());
+
+        bool regenerate_terrain = false;
+        bool regenerate_placement = false;
 
         if (ImGui::Begin("Settings"))
         {
@@ -988,11 +1068,11 @@ int main()
                     if (world_data.heightmap != heightmap_texture.getName())
                     {
                         GL::Texture::bindTextureUnit(heightmap_texture_unit, heightmap_texture);
-                        dispatchTerrainCompute();
+                        regenerate_terrain = true;
                     }
 
                     world_data.heightmap = heightmap_texture.getName();
-                    dispatchPlacementCompute();
+                    regenerate_placement = true;
                 }
 
                 ImGui::EndChild();
@@ -1002,7 +1082,7 @@ int main()
             {
                 if (ImGui::DragInt2("Terrain mesh resolution (x8)", reinterpret_cast<int*>(glm::value_ptr(terrain_resolution)),
                                     1, 1, INT_MAX))
-                    dispatchTerrainCompute();
+                    regenerate_terrain = true;
 
                 // terrain color
                 {
@@ -1041,9 +1121,23 @@ int main()
         ImGui::Render();
         imgui_imp.renderDrawData(ImGui::GetDrawData());
 
-        const std::chrono::duration<float> frame_time = std::chrono::steady_clock::now() - current_frame_start_time;
-        log_file << "frame_time=" << frame_time.count() << "\n";
+        // check for pending results
+        if (tree_placement_group.checkResult())
+            log.endCompute(Log::ComputeType::Trees);
+
+        if (stone_placement_group.checkResult())
+            log.endCompute(Log::ComputeType::Rocks);
+
+        if (regenerate_terrain)
+            dispatchTerrainCompute();
+
+        if (regenerate_placement)
+            dispatchPlacementCompute();
+
+        log.endFrame();
 
         glfwSwapBuffers(window.get());
     }
+
+    log.writeOut(log_file);
 }
