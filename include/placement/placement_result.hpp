@@ -35,11 +35,15 @@ struct ResultBuffer
     unsigned int num_classes;   ///< Number of placement classes in the buffer.
     GLsizeiptr size;        ///< Total size of the buffer, in bytes.
     GL::Buffer gl_object;       ///< GL buffer object.
+    const void* mapped_ptr; // a persistently mapped pointer.
 
     [[nodiscard]] constexpr GL::Buffer::Range getCountRange() const
     {
         return {0, static_cast<GLintptr>(num_classes * sizeof(unsigned int))};
     }
+
+    [[nodiscard]] const unsigned int* getCountBufferBegin() const { return static_cast<const unsigned int*>(mapped_ptr); }
+    [[nodiscard]] const unsigned int* getCountBufferEnd() const { return getCountBufferBegin() + num_classes; }
 
     [[nodiscard]] constexpr GL::Buffer::Range getElementRange() const
     {
@@ -141,19 +145,12 @@ public:
     template<typename Iter>
     uint copyClassRangeToHost(uint begin_class, uint end_class, Iter out_iter) const
     {
-        constexpr GLsizeiptr element_size = sizeof(Element);
         const uint element_count = getClassRangeElementCount(begin_class, end_class);
-        const GL::Buffer::Range map_range
-        {
-            getElementArrayBufferOffset() + getClassIndexOffset(begin_class) * element_size,
-            element_count * element_size
-        };
-        auto ptr = static_cast<const Element*>(m_buffer.gl_object.mapRange(map_range, GL::Buffer::AccessFlags::read));
+
+        auto ptr = reinterpret_cast<const Element*>(m_buffer.getCountBufferEnd());
 
         for (auto in_iter = ptr; in_iter != ptr + element_count;)
             *out_iter++ = *in_iter++;
-
-        m_buffer.gl_object.unmap();
 
         return element_count;
     }
@@ -190,7 +187,7 @@ public:
     uint copyClassToHost(uint class_index, Iter out_iter) const
     { return copyClassRangeToHost(class_index, class_index + 1, out_iter); }
 
-    std::vector<Element> copyClassToHost(uint class_index) const;
+    [[nodiscard]] std::vector<Element> copyClassToHost(uint class_index) const;
 
     /// Direct access to the results.
     [[nodiscard]] const ResultBuffer& getBuffer() const { return m_buffer; }

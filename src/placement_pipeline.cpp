@@ -7,6 +7,13 @@
 
 #include <stdexcept>
 
+#define PIPELINE_LOG 0
+
+#if PIPELINE_LOG
+#include <iostream>
+#include <chrono>
+#endif
+
 namespace placement {
 
 using Candidate = Result::Element;
@@ -25,11 +32,22 @@ ResultBuffer PlacementPipeline::s_makeResultBuffer(uint candidate_count, uint cl
 
     const auto size = class_count * uint_size + candidate_count * result_element_size;
 
-    GL::Buffer buffer;
-    buffer.allocateImmutable(size, GL::Buffer::StorageFlags::map_read, nullptr);
-    gl.ClearNamedBufferSubData(buffer.getName(), GL_R8, 0, class_count * uint_size, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+    ResultBuffer result_buffer {class_count, size, GL::Buffer(), nullptr};
 
-    return {class_count, size, std::move(buffer)};
+    using SFlags = GL::Buffer::StorageFlags;
+
+    GL::BufferHandle buffer = result_buffer.gl_object;
+    buffer.allocateImmutable(size, SFlags::map_read | SFlags::map_persistent | SFlags::map_coherent, nullptr);
+
+    using AFlags = GL::Buffer::AccessFlags;
+    result_buffer.mapped_ptr = buffer.mapRange(0, size, AFlags::read | AFlags::coherent | AFlags::persistent);
+
+    if (!result_buffer.mapped_ptr)
+        throw std::runtime_error("GL memory mapping error!");
+
+    gl.ClearNamedBufferSubData(buffer.getName(), GL_R8, 0, class_count * uint_size, GL_RED,  GL_UNSIGNED_BYTE, nullptr);
+
+    return result_buffer;
 }
 
 enum BufferIndex
@@ -81,11 +99,38 @@ std::vector<T> dumpBufferRange(GL::BufferHandle buffer, GL::Buffer::Range range,
     return vector;
 }
 
-//DEBUG
+class PerfTimer final
+{
+public:
+    using Clock = std::chrono::steady_clock;
+
+    void start(const char* tag)
+    {
+#if PIPELINE_LOG
+        m_start_time = Clock::now();
+        m_tag = tag;
+#endif
+    }
+
+    void stop()
+    {
+#if PIPELINE_LOG
+        std::cout << (m_tag ? m_tag : "<no tag>") << ": " << (Clock::now() - m_start_time).count() << "ns\n";
+#endif
+    }
+
+private:
+    const char* m_tag {nullptr};
+    Clock::time_point m_start_time;
+};
 
 FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, const LayerData &layer_data,
                                                  glm::vec2 lower_bound, glm::vec2 upper_bound)
 {
+    PerfTimer timer;
+
+    timer.start("setup : size calculations");
+
     constexpr glm::uvec2 wg_size{GenerationKernel::work_group_size};
     const glm::vec2 wg_bounds = m_work_group_scale * layer_data.footprint;
 
@@ -94,15 +139,25 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
 
     const uint candidate_count = num_work_groups.x * num_work_groups.y * wg_size.x * wg_size.y;
 
+    timer.stop();
+
+    timer.start("setup : m_buffer.resize()");
     m_buffer.resize(candidate_count);
+    timer.stop();
 
+    timer.start("setup : makeResultBuffer()");
     ResultBuffer result_buffer = s_makeResultBuffer(candidate_count, layer_data.densitymaps.size());
+    timer.stop();
 
+    timer.start("setup : buffer bindings");
     const auto buffer_bindings = s_makeBindingArray(m_buffer, result_buffer);
 
     GL::Buffer::bindRanges(GL::Buffer::IndexedTarget::shader_storage, m_base_binding_index,
                            buffer_bindings.begin(), buffer_bindings.end());
+    timer.stop();
 
+
+    timer.start("generation");
     // generation
     gl.BindTextureUnit(m_base_tex_unit, world_data.heightmap);
     m_generation_kernel(num_work_groups, work_group_offset, layer_data.footprint, world_data.scale, m_base_tex_unit,
@@ -110,6 +165,9 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
                         m_getBindingIndex(density_buffer_index));
     gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
+    timer.stop();
+
+    timer.start("evaluation");
     // evaluation
     const uint class_count = layer_data.densitymaps.size();
     for (std::size_t i = 0; i < class_count; i++)
@@ -122,22 +180,32 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
                             m_getBindingIndex(density_buffer_index));
         gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     }
+    timer.stop();
 
+    timer.start("indexation");
     // indexation
     m_indexation_kernel(IndexationKernel::calculateNumWorkGroups(candidate_count),
                         m_getBindingIndex(candidate_buffer_index), m_getBindingIndex(count_buffer_index),
                         m_getBindingIndex(index_buffer_index));
     gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    timer.stop();
 
+    timer.start("copy");
     // copy
     m_copy_kernel(CopyKernel::calculateNumWorkGroups(candidate_count), m_getBindingIndex(candidate_buffer_index),
                   m_getBindingIndex(count_buffer_index), m_getBindingIndex(index_buffer_index),
                   m_getBindingIndex(element_buffer_index));
     gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+    timer.stop();
 
     // fence
     auto fence = GL::createFenceSync();
+
+    /*
+    timer.start("flush");
     gl.Flush();
+    timer.stop();
+    */
 
     return {std::move(result_buffer), std::move(fence)};
 }

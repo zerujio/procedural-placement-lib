@@ -6,9 +6,17 @@ namespace placement {
 
 constexpr GLintptr uint_size = sizeof(GLuint);
 
-Result::Result(ResultBuffer &&buffer) : m_buffer(std::move(buffer)), m_index_offset(m_buffer.num_classes + 1)
+Result::Result(ResultBuffer &&buffer) : m_buffer(std::move(buffer))
 {
-    m_buffer.gl_object.read(0, m_buffer.num_classes * uint_size, m_index_offset.data() + 1);
+    using clock = std::chrono::steady_clock;
+
+    const uint num_classes = m_buffer.num_classes;
+
+    m_index_offset.reserve(num_classes + 1);
+    m_index_offset.emplace_back(0);
+
+    //m_buffer.gl_object.read(0, read_size, m_index_offset.data() + 1);
+    m_index_offset.insert(m_index_offset.end(), m_buffer.getCountBufferBegin(), m_buffer.getCountBufferEnd());
 
     uint sum = 0;
     for (uint &index: m_index_offset)
