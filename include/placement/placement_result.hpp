@@ -13,6 +13,14 @@
 
 namespace placement {
 
+struct ResultElement
+{
+    glm::vec3 position;
+    std::uint32_t class_index;
+
+    static constexpr GLsizeiptr ssize = sizeof(position) + sizeof(class_index);
+};
+
 /**
  * @brief Wraps a buffer containing placement results.
  * A result buffer is composed of "count" and "value" sections. The count section specifies the number of valid elements
@@ -35,20 +43,27 @@ struct ResultBuffer
     unsigned int num_classes;   ///< Number of placement classes in the buffer.
     GLsizeiptr size;        ///< Total size of the buffer, in bytes.
     GL::Buffer gl_object;       ///< GL buffer object.
-    const void* mapped_ptr; // a persistently mapped pointer.
+    const std::byte* mapped_ptr; // a persistently mapped pointer.
 
+    static constexpr auto uint_ssize = static_cast<GLsizeiptr>(sizeof(std::uint32_t));
+    static constexpr auto element_ssize = static_cast<GLsizeiptr>(sizeof(ResultElement));
+
+    [[nodiscard]] constexpr GLintptr getCountBufferOffset() const { return 0; }
+    [[nodiscard]] constexpr GLsizeiptr getCountBufferSize() const { return num_classes * 4; }
     [[nodiscard]] constexpr GL::Buffer::Range getCountRange() const
     {
-        return {0, static_cast<GLintptr>(num_classes * sizeof(unsigned int))};
+        return {getCountBufferOffset(), getCountBufferSize()};
     }
+    [[nodiscard]] const std::uint32_t* getCountDataBegin() const { return reinterpret_cast<const std::uint32_t*>(mapped_ptr + getCountBufferOffset()); }
+    [[nodiscard]] const std::uint32_t* getCountDataEnd() const { return getCountDataBegin() + num_classes; }
 
-    [[nodiscard]] const unsigned int* getCountBufferBegin() const { return static_cast<const unsigned int*>(mapped_ptr); }
-    [[nodiscard]] const unsigned int* getCountBufferEnd() const { return getCountBufferBegin() + num_classes; }
-
+    [[nodiscard]] constexpr GLintptr getElementBufferOffset() const { return getCountBufferOffset() + getCountBufferSize(); }
+    [[nodiscard]] constexpr GLsizeiptr getElementBufferSize() const { return size - getElementBufferOffset(); }
+    [[nodiscard]] const ResultElement* getElementDataBegin() const { return reinterpret_cast<const ResultElement*>(mapped_ptr + getElementBufferOffset()); }
+    [[nodiscard]] const ResultElement* getElementDataEnd() const { return reinterpret_cast<const ResultElement*>(mapped_ptr + size); }
     [[nodiscard]] constexpr GL::Buffer::Range getElementRange() const
     {
-        const auto count_size = static_cast<GLintptr>(num_classes * sizeof(unsigned int));
-        return {count_size, size - count_size};
+        return {getElementBufferOffset(), getElementBufferSize()};
     }
 };
 
@@ -58,15 +73,9 @@ struct ResultBuffer
 class Result
 {
 public:
-    using uint = unsigned int;
+    using uint = std::uint32_t;
 
-    struct Element
-    {
-        glm::vec3 position;
-        uint class_index;
-
-        static constexpr GLsizeiptr ssize = sizeof(position) + sizeof(class_index);
-    };
+    using Element = ResultElement;
 
     explicit Result(ResultBuffer &&buffer);
 
@@ -145,11 +154,15 @@ public:
     template<typename Iter>
     uint copyClassRangeToHost(uint begin_class, uint end_class, Iter out_iter) const
     {
+        const uint index_offset = getClassIndexOffset(begin_class);
         const uint element_count = getClassRangeElementCount(begin_class, end_class);
 
-        auto ptr = reinterpret_cast<const Element*>(m_buffer.getCountBufferEnd());
+        const ResultElement* begin = m_buffer.getElementDataBegin() + index_offset;
+        const ResultElement* end = begin + element_count;
 
-        for (auto in_iter = ptr; in_iter != ptr + element_count;)
+        assert(end <= m_buffer.getElementDataEnd());
+
+        for (auto in_iter = begin; in_iter != end;)
             *out_iter++ = *in_iter++;
 
         return element_count;
@@ -220,8 +233,7 @@ public:
      * This operation moves out the ResultBuffer, leaving this object in an empty state.
      * @return a Result structure that contains the buffer and information about the layout of the data.
      */
-    [[nodiscard]] Result readResult()
-    { return Result(moveResultBuffer()); }
+    [[nodiscard]] Result readResult();
 
     /**
      * @brief Access the results of the placement operation.

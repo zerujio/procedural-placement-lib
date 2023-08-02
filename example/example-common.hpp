@@ -10,7 +10,11 @@
 
 #include "simple-renderer/mesh.hpp"
 #include "simple-renderer/shader_program.hpp"
+#ifndef CPU_PLACEMENT
 #include "placement/placement_result.hpp"
+#else
+#include "cpu-placement.hpp"
+#endif
 
 #include <utility>
 

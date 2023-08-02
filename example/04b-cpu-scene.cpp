@@ -1,57 +1,120 @@
-#ifndef CPU_PLACEMENT
+// this file is a duplicate of 04-scene.cpp that uses the CPU instead.
+
 #include "placement/placement.hpp"
-#else
-#include "cpu-placement.hpp"
-#include "stb_image.h"
-#include "placement/kernel/compute_kernel.hpp"
-#endif
 
 #include "example-common.hpp"
-
+#include "common/scoped_timer.hpp"
 #include "simple-renderer/renderer.hpp"
 #include "simple-renderer/instanced_mesh.hpp"
 #include "simple-renderer/texture_2d.hpp"
 #include "simple-renderer/image_data.hpp"
-
 #include "glutils/debug.hpp"
-
 #include "imgui.h"
-
 #include "external/json.hpp"
+#include "cpu-placement.hpp"
+
+#include "../src/disk_distribution_generator.hpp"
 
 #include <chrono>
 #include <iostream>
 #include <filesystem>
 #include <fstream>
 #include <deque>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <execution>
 
-
-using Clock = std::chrono::steady_clock;
-using nlohmann::json;
-
-static void logEvent(json& log_struct, const char* tag)
+class Log
 {
-    static const auto time_zero = Clock::now();
+public:
+    using Duration = std::chrono::steady_clock::duration;
+    using Clock = std::chrono::steady_clock;
 
-    log_struct[tag].emplace_back((Clock::now() - time_zero).count());
-}
-
-struct ScopedLog
-{
-    explicit ScopedLog(json& log_json) : log(log_json)
+    Log() : m_init_time(Clock::now())
     {
-        logEvent(log, begin_string);
+        m_frames.emplace_back(0, 0, 0);
     }
 
-    ~ScopedLog()
+    Clock::duration startFrame()
     {
-        logEvent(log, end_string);
+        const Duration start_time = now();
+        const auto [prev_start_time, _0, _1] = m_frames.back();
+        const Duration delta = start_time - prev_start_time;
+        m_frames.emplace_back(start_time, delta, Duration::zero());
+        return delta;
     }
 
-    static constexpr const char begin_string[] {"begin"};
-    static constexpr const char end_string[] {"end"};
+    void endFrame()
+    {
+        auto &[start_time, _, duration] = m_frames.back();
+        duration = now() - start_time;
+    }
 
-    json& log;
+    enum class ComputeType
+    {
+        Trees, Rocks
+    };
+
+    void startCompute(ComputeType type)
+    {
+        auto &deque = type == ComputeType::Trees ? m_tree_compute : m_rock_compute;
+        deque.emplace_back(m_frames.size() - 1, 0);
+    }
+
+    void endCompute(ComputeType type)
+    {
+        auto &deque = type == ComputeType::Trees ? m_tree_compute : m_rock_compute;
+        auto &[_, end] = deque.back();
+        end = m_frames.size() - 1;
+    }
+
+    void writeOut(std::ostream &out) const
+    {
+        out << "frame_time=";
+        writeOutDurationArray<0>(out, m_frames);
+
+        out << "\nframe_delta=";
+        writeOutDurationArray<1>(out, m_frames);
+
+        out << "\nframe_cpu_time=";
+        writeOutDurationArray<2>(out, m_frames);
+
+        out << "\ntree_compute_start=";
+        writeOutIntArray<0>(out, m_tree_compute);
+
+        out << "\ntree_compute_end=";
+        writeOutIntArray<1>(out, m_tree_compute);
+
+        out << "\nrock_compute_start=";
+        writeOutIntArray<0>(out, m_rock_compute);
+
+        out << "\nrock_compute_end=";
+        writeOutIntArray<1>(out, m_rock_compute);
+    }
+
+private:
+    template<std::size_t N, typename Container>
+    void writeOutDurationArray(std::ostream &out, const Container &container) const
+    {
+        for (const auto &value: container)
+            out << std::get<N>(value).count() << ", ";
+    }
+
+    template<std::size_t N, typename Container>
+    void writeOutIntArray(std::ostream &out, const Container &container) const
+    {
+        for (const auto &value: container)
+            out << std::get<N>(value) << ",";
+    }
+
+    [[nodiscard]] Clock::duration now() const
+    { return Clock::now() - m_init_time; }
+
+    Clock::time_point m_init_time;
+    std::deque<std::tuple<Duration, Duration, Duration>> m_frames;
+    std::deque<std::pair<std::size_t, std::size_t>> m_tree_compute;
+    std::deque<std::pair<std::size_t, std::size_t>> m_rock_compute;
 };
 
 constexpr glm::vec2 initial_window_size{1024, 768};
@@ -265,26 +328,17 @@ public:
 
     ResultMesh(const MeshData &mesh_data, const placement::Result &result, uint layer)
             : m_mesh(mesh_data.positions, mesh_data.normals, mesh_data.tex_coords, mesh_data.indices),
-#ifdef CPU_PLACEMENT
               m_handle(m_mesh.addInstanceData(attribute_locations, attribute_sequence, 1,
-                                              result.getClassElementCount(layer), result.getClassElementData(layer)))
-#else
-              m_handle(m_mesh.addInstanceData(attribute_locations, attribute_sequence, 1,
-                                              result.getClassElementCount(layer), result.getBuffer().gl_object,
-                                              result.getClassBufferOffset(layer)))
-#endif
+                                              result.getClassElementCount(layer),
+                                              result.getClassElementData(layer)))
     {
         m_mesh.setInstanceCount(result.getClassElementCount(layer));
     }
 
     void updateResult(const placement::Result &result, uint layer)
     {
-#ifdef  CPU_PLACEMENT
-        m_mesh.updateInstanceData(m_handle, result.getClassElementCount(layer), result.getClassElementData(layer));
-#else
-        m_mesh.updateInstanceData(m_handle, result.getClassElementCount(layer), result.getBuffer().gl_object,
-                                  result.getClassBufferOffset(layer));
-#endif
+        m_mesh.updateInstanceData(m_handle, result.getClassElementCount(layer),
+                                  result.getClassElementData(layer));
         m_mesh.setInstanceCount(result.getClassElementCount(layer));
     }
 
@@ -304,11 +358,7 @@ const simple::VertexAttributeSequence ResultMesh::attribute_sequence = simple::V
 class PlacementGroup
 {
 public:
-#ifdef CPU_PLACEMENT
-    using TextureIter = std::map<std::string, placement::GrayscaleImage>::const_iterator;
-#else
-    using TextureIter = std::map<std::string, simple::Texture2D>::const_iterator;
-#endif
+    using TextureIter = std::map<std::string, GrayscaleImage>::const_iterator;
     using MeshDataIter = std::map<std::string, MeshData>::const_iterator;
 
     [[nodiscard]]
@@ -318,27 +368,26 @@ public:
     void setFootprint(float diameter)
     { m_layer_data.footprint = diameter; }
 
-    void computePlacement(placement::PlacementPipeline &pipeline, placement::WorldData &world_data,
+    void computePlacement(CPUPlacement &pipeline, CPUWorldData &world_data,
                           glm::vec2 lower_bound, glm::vec2 upper_bound)
     {
         m_future_result = pipeline.computePlacement(world_data, m_layer_data, lower_bound, upper_bound);
         m_start_time = std::chrono::steady_clock::now();
     }
 
-    bool checkResult(nlohmann::json& log_json)
+    bool checkResult()
     {
         if (!m_future_result || !m_future_result->isReady())
             return false;
 
         {
-            ScopedLog l {log_json["read_result"]};
-            m_result = m_future_result->readResult();
+            ScopedTimer timer {"get results"};
+            m_result = m_future_result->getResult();
         }
-
         m_future_result.reset();
 
         {
-            ScopedLog l {log_json["update_meshes"]};
+            ScopedTimer t {"update meshes"};
 
             for (uint i = 0; i < m_result->getNumClasses(); i++)
             {
@@ -359,11 +408,7 @@ public:
 
     void addLayer(TextureIter texture, MeshDataIter mesh)
     {
-#ifdef CPU_PLACEMENT
-        m_layer_data.densitymaps.emplace_back(placement::DensityMap{&texture->second});
-#else
-        m_layer_data.densitymaps.emplace_back(placement::DensityMap{texture->second.getGLObject().getName()});
-#endif
+        m_layer_data.densitymaps.emplace_back(CPUDensityMap{&texture->second});
         m_meshes.emplace_back();
         m_iters.emplace_back(texture, mesh);
     }
@@ -380,11 +425,7 @@ public:
 
     void setLayerTexture(uint layer_index, TextureIter texture_iter)
     {
-#ifdef CPU_PLACEMENT
         m_layer_data.densitymaps.at(layer_index).texture = &texture_iter->second;
-#else
-        m_layer_data.densitymaps.at(layer_index).texture = texture_iter->second.getGLObject().getName();
-#endif
         m_iters[layer_index].first = texture_iter;
     }
 
@@ -426,23 +467,19 @@ public:
         dm.max_value = layer_params.max_value;
     }
 
-    [[nodiscard]] const auto& getResult() const { return m_result; }
+    [[nodiscard]] const auto &getResult() const
+    { return m_result; }
 
 private:
-    std::chrono::steady_clock::time_point m_start_time {};
-    placement::LayerData m_layer_data;
-    std::optional<placement::Result> m_result;
-    std::optional<placement::FutureResult> m_future_result;
+    std::chrono::steady_clock::time_point m_start_time{};
+    CPULayerData m_layer_data;
+    std::optional<CPUResult> m_result;
+    std::optional<CPUFutureResult> m_future_result;
     std::vector<std::optional<ResultMesh>> m_meshes;
     std::vector<std::pair<TextureIter, MeshDataIter>> m_iters;
 };
 
-void placementGroupGUI(PlacementGroup &placement_group,
-#ifdef CPU_PLACEMENT
-                       const std::map<std::string, placement::GrayscaleImage> &textures,
-#else
-                       const std::map<std::string, simple::Texture2D> &textures,
-#endif
+void placementGroupGUI(PlacementGroup &placement_group, const std::map<std::string, GrayscaleImage> &textures,
                        const std::map<std::string, MeshData> &meshes)
 {
     float footprint = placement_group.getFootprint();
@@ -680,20 +717,23 @@ nlohmann::json loadHeightmapConfig(const std::filesystem::path &path)
     return nlohmann::json::parse(ifstream);
 }
 
-int main(int argc, char* argv[])
+int main()
 {
-    nlohmann::json log_json;
+    std::ofstream log_file("04b-cpu-scene.log");
 
-    const auto log_event = [&](const char* tag)
+    if (!log_file.is_open())
     {
-        logEvent(log_json, tag);
-    };
+        std::cerr << "couldn't open log file\n";
+        return -1;
+    }
+
+    Log log;
 
     GLFW::InitGuard glfw_init;
 
     glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
     GLFW::Window window{"04 - Scene", initial_window_size};
-    //glfwSwapInterval(0);
+    glfwSwapInterval(0);
 
     GL::enableDebugCallback();
 
@@ -741,12 +781,7 @@ int main(int argc, char* argv[])
                                                         glm::pi<float>() / 2.f, {1, 0, 0});
 
     const auto grayscale_textures = loadFromFolder("assets/textures/grayscale", [](const std::string &path)
-#ifndef CPU_PLACEMENT
-    { return simple::Texture2D(simple::ImageData::fromFile(path)); }
-#else
-                                                   { return placement::GrayscaleImage(path.c_str()); }
-#endif
-    );
+    { return GrayscaleImage(path.c_str()); });
 
     if (grayscale_textures.empty())
     {
@@ -758,10 +793,7 @@ int main(int argc, char* argv[])
 
     GL::Texture::bindTextureUnit(color_texture_unit, color_texture.getGLObject());
 
-    placement::PlacementPipeline pipeline;
-#ifndef CPU_PLACEMENT
-    pipeline.setBaseTextureUnit(glm::max(heightmap_texture_unit, color_texture_unit) + 1);
-#endif
+    CPUPlacement pipeline;
 
     auto current_heightmap_iter = grayscale_textures.find(heightmap_config["file"].get<std::filesystem::path>().stem());
 
@@ -771,22 +803,18 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    placement::WorldData world_data{/*scale=*/{1, 1, 1},
-#ifndef CPU_PLACEMENT
-            /*heightmap=*/current_heightmap_iter->second.getGLObject().getName()
-#else
-                                              &current_heightmap_iter->second
-#endif
-    };
+    CPUWorldData world_data{/*scale=*/{1, 1, 1}, /*heightmap=*/&current_heightmap_iter->second};
 
-    world_data.scale.z = heightmap_config["max elevation"].get<float>() - heightmap_config["min elevation"].get<float>();
+    world_data.scale.z =
+            heightmap_config["max elevation"].get<float>() - heightmap_config["min elevation"].get<float>();
     world_data.scale.x = world_data.scale.z / heightmap_config["z/x scale"].get<float>();
     world_data.scale.y = world_data.scale.x *
-            float(current_heightmap_iter->second.getSize().y) / float(current_heightmap_iter->second.getSize().x);
+                         float(current_heightmap_iter->second.getSize().y) /
+                         float(current_heightmap_iter->second.getSize().x);
 
     camera.getController().setMaxPosition(world_data.scale);
     camera.getController().setMaxRadius(world_data.scale.z * 0.5f);
-    camera.getController().setPosition(world_data.scale * glm::vec3 {.5, .5, .125});
+    camera.getController().setPosition(world_data.scale * glm::vec3{.5, .5, .125});
 
     // trees
     const auto tree_mesh_data = loadFromFolder("assets/meshes/trees", loadOBJ);
@@ -844,14 +872,14 @@ int main(int argc, char* argv[])
     {
         [[nodiscard]] constexpr std::pair<glm::vec2, glm::vec2> getPlacementBounds() const
         {
-            const glm::vec2 center {current_cell};
-            const glm::vec2 delta {cell_vicinity};
+            const glm::vec2 center{current_cell};
+            const glm::vec2 delta{cell_vicinity};
             return {(center - delta) * cell_size, (center + delta) * cell_size};
         }
 
         bool updatePosition(glm::vec2 current_position)
         {
-            const glm::uvec2 cell {current_position / cell_size};
+            const glm::uvec2 cell{current_position / cell_size};
             if (cell == current_cell)
                 return false;
             current_cell = cell;
@@ -863,48 +891,32 @@ int main(int argc, char* argv[])
         glm::uvec2 cell_vicinity{3, 3};
     } placement_grid;
 
-    glm::mat4 placement_transform {1.f};
-
-    constexpr bool place_trees = true;
-    constexpr bool place_rocks = true;
-
-    constexpr auto tree_placement_tag = "tree_placement";
-    constexpr auto rock_placement_tag = "rock_placement";
+    glm::mat4 placement_transform{1.f};
 
     const auto dispatchPlacementCompute = [&]()
     {
-        const auto bounds = placement_grid.getPlacementBounds();
+        const auto [lower_bound, upper_bound] = placement_grid.getPlacementBounds();
 
         const glm::vec2 xy_scale = world_data.scale;
 
-        const auto dispatch = [&](PlacementGroup& group, const char* tag)
-        {
-            json& log = log_json[tag];
-            logEvent(log, "begin");
-            ScopedLog l {log["dispatch"]};
-            group.computePlacement(pipeline, world_data, glm::max(bounds.first, {0, 0}), glm::min(bounds.second, xy_scale));
-        };
+        log.startCompute(Log::ComputeType::Trees);
+        tree_placement_group.computePlacement(pipeline, world_data, glm::max(lower_bound, {0, 0}),
+                                              glm::min(upper_bound, xy_scale));
 
-        if (place_trees)
-            dispatch(tree_placement_group, tree_placement_tag);
+        log.startCompute(Log::ComputeType::Rocks);
+        stone_placement_group.computePlacement(pipeline, world_data, glm::max(lower_bound, {0, 0}),
+                                               glm::min(upper_bound, xy_scale));
 
-        if (place_rocks)
-            dispatch(stone_placement_group, rock_placement_tag);
-
-        placement_transform = glm::translate(glm::mat4(1), {bounds.first, 0});
+        placement_transform = glm::translate(glm::mat4(1), {lower_bound, 0});
     };
 
     dispatchPlacementCompute();
 
     // terrain
     TerrainMesh terrain_mesh;
-#ifndef CPU_PLACEMENT
-    GL::Texture::bindTextureUnit(heightmap_texture_unit, current_heightmap_iter->second.getGLObject());
-#else
     simple::Texture2D heightmap_texture_gl {simple::ImageData::fromFile(assets_folder / heightmap_config["file"])};
     GL::Texture::bindTextureUnit(heightmap_texture_unit, heightmap_texture_gl.getGLObject());
-#endif
-    glm::uvec2 terrain_resolution = current_heightmap_iter->second.getSize() / 8u;
+    glm::uvec2 terrain_resolution = current_heightmap_iter->second.getSize() / 8;
     const auto dispatchTerrainCompute = [&]()
     { terrain_mesh.generate(terrain_resolution, heightmap_texture_unit); };
 
@@ -923,17 +935,11 @@ int main(int argc, char* argv[])
     terrain_shader.lowColorIndex() = 12;
     terrain_shader.highColorIndex() = 16;
 
-    auto frame_start = Clock::now();
-
     while (!glfwWindowShouldClose(window.get()))
     {
-        log_event("frame_start");
-
         glfwPollEvents();
 
-        const auto prev_frame_start = frame_start;
-        frame_start = Clock::now();
-        const std::chrono::duration<float> frame_delta = frame_start - prev_frame_start;
+        const std::chrono::duration<float> frame_delta = log.startFrame();
 
         imgui_imp.newFrame();
         ImGui::NewFrame();
@@ -955,10 +961,9 @@ int main(int argc, char* argv[])
             ImGui::Text("Frame time: %fs.\nFPS: %f", frame_delta.count(), 1. / frame_delta.count());
 
             if (const auto &tree_result = tree_placement_group.getResult())
-                ImGui::Text("%d árboles", tree_result->getElementArrayLength());
-
+                ImGui::Text("%ld árboles", tree_result->getElements().size());
             if (const auto &stone_result = stone_placement_group.getResult())
-                ImGui::Text("%d rocas", stone_result->getElementArrayLength());
+                ImGui::Text("%ld rocas", stone_result->getElements().size());
 
             ImGui::Separator();
 
@@ -1048,18 +1053,17 @@ int main(int argc, char* argv[])
 
                 ImGui::DragFloat("Grid cell size", &placement_grid.cell_size, 10, 1, FLT_MAX, "%.1f");
 
-                ImGui::DragInt2("Placement area", reinterpret_cast<int*>(glm::value_ptr(placement_grid.cell_vicinity)),
-                                1, 0, std::numeric_limits<int>::max());
+                ImGui::DragInt2("Placement area", reinterpret_cast<int *>(glm::value_ptr(placement_grid.cell_vicinity)),
+                                1, 0, INT_MAX);
 
                 ImGui::Separator();
 
                 ImGui::Text("World Data\nScale: %fx x %fy x %fz",
                             world_data.scale.x, world_data.scale.y, world_data.scale.z);
-#ifndef CPU_PLACEMENT
+
                 selectionGUI("Heightmap", current_heightmap_iter, grayscale_textures.begin(), grayscale_textures.end(),
                              [&](decltype(current_heightmap_iter) new_iter)
                              { current_heightmap_iter = new_iter; });
-#endif
 
                 ImGui::Spacing();
                 ImGui::Separator();
@@ -1081,17 +1085,18 @@ int main(int argc, char* argv[])
 
                 if (ImGui::Button("Compute Placement"))
                 {
-#ifndef CPU_PLACEMENT
-                    const GL::TextureHandle heightmap_texture = current_heightmap_iter->second.getGLObject();
 
-                    if (world_data.heightmap != heightmap_texture.getName())
+                    const GrayscaleImage* heightmap_texture = &current_heightmap_iter->second;
+
+                    /*
+                    if (world_data.heightmap != heightmap_texture)
                     {
                         GL::Texture::bindTextureUnit(heightmap_texture_unit, heightmap_texture);
                         regenerate_terrain = true;
                     }
+                    */
 
-                    world_data.heightmap = heightmap_texture.getName();
-#endif
+                    world_data.heightmap = heightmap_texture;
                     regenerate_placement = true;
                 }
 
@@ -1100,8 +1105,9 @@ int main(int argc, char* argv[])
 
             if (ImGui::CollapsingHeader("Terrain"))
             {
-                if (ImGui::DragInt2("Terrain mesh resolution (x8)", reinterpret_cast<int*>(glm::value_ptr(terrain_resolution)),
-                                    1, 1, std::numeric_limits<int>::max()))
+                if (ImGui::DragInt2("Terrain mesh resolution (x8)",
+                                    reinterpret_cast<int *>(glm::value_ptr(terrain_resolution)),
+                                    1, 1, INT_MAX))
                     regenerate_terrain = true;
 
                 // terrain color
@@ -1133,7 +1139,8 @@ int main(int argc, char* argv[])
             if (mesh_opt)
                 renderer.draw(mesh_opt->getMesh(), phong_shader.getRendererProgram(), glm::mat4(1.f));
 
-        terrain_mesh.draw_mode = glfwGetKey(window.get(), GLFW_KEY_SPACE) == GLFW_PRESS ? simple::DrawMode::lines : simple::DrawMode::triangles;
+        terrain_mesh.draw_mode = glfwGetKey(window.get(), GLFW_KEY_SPACE) == GLFW_PRESS ? simple::DrawMode::lines
+                                                                                        : simple::DrawMode::triangles;
         renderer.draw(terrain_mesh, terrain_shader.getRendererProgram(), terrain_transform);
 
         renderer.finishFrame(camera.getRendererCamera());
@@ -1142,34 +1149,22 @@ int main(int argc, char* argv[])
         imgui_imp.renderDrawData(ImGui::GetDrawData());
 
         // check for pending results
-        const auto checkPlacementGroup = [](PlacementGroup& group, json& log)
-        {
-            if (group.checkResult(log))
-                logEvent(log, "end");
-        };
+        if (tree_placement_group.checkResult())
+            log.endCompute(Log::ComputeType::Trees);
 
-        if (place_trees)
-            checkPlacementGroup(tree_placement_group, log_json[tree_placement_tag]);
-
-        if (place_rocks)
-            checkPlacementGroup(stone_placement_group, log_json[rock_placement_tag]);
+        if (stone_placement_group.checkResult())
+            log.endCompute(Log::ComputeType::Rocks);
 
         if (regenerate_terrain)
-        {
             dispatchTerrainCompute();
-        }
 
         if (regenerate_placement)
-        {
             dispatchPlacementCompute();
-        }
 
-        log_event("swap_buffer");
+        log.endFrame();
+
         glfwSwapBuffers(window.get());
-
-        log_event("frame_end");
     }
 
-    std::ofstream log_file { std::filesystem::path(argv[0]).stem() += ".json" };
-    log_file << log_json;
+    log.writeOut(log_file);
 }

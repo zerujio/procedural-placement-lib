@@ -76,11 +76,7 @@ public:
     void setBaseShaderStorageBindingPoint(GLuint index);
 
 private:
-    class TransientBuffer;
-
     [[nodiscard]] static ResultBuffer s_makeResultBuffer(uint candidate_count, uint class_count);
-    [[nodiscard]] static auto s_makeBindingArray(const TransientBuffer& transient_buffer,
-                                                 const ResultBuffer& result_buffer);
     [[nodiscard]] uint m_getBindingIndex(uint buffer_index) const;
 
     uint m_base_tex_unit {0};
@@ -90,46 +86,6 @@ private:
     EvaluationKernel m_evaluation_kernel;
     IndexationKernel m_indexation_kernel;
     CopyKernel m_copy_kernel;
-
-    class TransientBuffer
-    {
-    public:
-        void resize(GLsizeiptr candidate_count);
-
-        void reserve(GLsizeiptr candidate_count);
-
-        [[nodiscard]] GLsizeiptr getSize() const
-        { return m_size; }
-
-        [[nodiscard]] GLsizeiptr getCapacity() const
-        { return m_capacity; }
-
-        [[nodiscard]] GL::BufferHandle getBuffer() const { return m_buffer; }
-
-        [[nodiscard]] GL::Buffer::Range getCandidateRange() const { return m_candidate_range; }
-
-        [[nodiscard]] GL::Buffer::Range getDensityRange() const { return m_density_range; }
-
-        [[nodiscard]] GL::Buffer::Range getWorldUVRange() const { return m_world_uv_range; }
-
-        [[nodiscard]] GL::Buffer::Range getIndexRange() const { return m_index_range; }
-
-    private:
-        GL::Buffer m_buffer{};
-        GLsizeiptr m_capacity{0};
-        GLsizeiptr m_size{0};
-
-        GL::Buffer::Range m_candidate_range;
-        GL::Buffer::Range m_density_range;
-        GL::Buffer::Range m_world_uv_range;
-        GL::Buffer::Range m_index_range;
-
-        static constexpr GLsizeiptr s_min_capacity = 64;
-
-        static GLsizeiptr s_calculateSize(GLsizeiptr capacity);
-
-        class Allocator;
-    } m_buffer;
 };
 
 } // placement

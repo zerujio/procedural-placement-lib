@@ -359,16 +359,15 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
 
         const auto result_0 = compute_placement();
         CAPTURE(result_0);
-        CHECK(!result_0.empty());
+        REQUIRE(!result_0.empty());
 
         const auto result_1 = compute_placement();
         CAPTURE(result_1);
-        CHECK(!result_1.empty());
+        REQUIRE(!result_1.empty());
 
         auto compute_diff = [](const std::vector<Element> &l, const std::vector<Element> &r)
         {
-            std::vector<Element> diff;
-            diff.resize(std::max(l.size(), r.size()));
+            std::vector<Element> diff {l.size() + r.size()};
             const auto diff_end = std::set_symmetric_difference(l.begin(), l.end(), r.begin(), r.end(),
                                                                 diff.begin(), elementCompare);
             diff.erase(diff_end, diff.end());
@@ -381,7 +380,7 @@ TEST_CASE("PlacementPipeline", "[pipeline]")
 
         const auto result_2 = compute_placement();
         CAPTURE(result_2);
-        CHECK(!result_2.empty());
+        REQUIRE(!result_2.empty());
 
         const auto diff_02 = compute_diff(result_0, result_2);
         CAPTURE(diff_02);
@@ -486,12 +485,17 @@ TEST_CASE("PlacementPipeline (multiclass)", "[pipeline][multiclass]")
             for (std::size_t i = 0; i < num_classes; i++)
             {
                 const auto class_size = results.getClassElementCount(i);
-                all_results_subsection.insert(all_results_subsection.cend(), begin_iter, begin_iter + class_size);
-                begin_iter += class_size;
+
+                {
+                    const auto begin = begin_iter;
+                    const auto end = begin_iter += class_size;
+                    all_results_subsection.insert(all_results_subsection.cend(), begin, end);
+                }
 
                 const auto class_results = results.copyClassToHost(i);
-                CHECK(results.getClassElementCount(i) == class_results.size());
+                CHECK(class_size == class_results.size());
 
+                CAPTURE(i, num_classes);
                 CHECK(class_results == all_results_subsection);
                 all_results_subsection.clear();
             }
@@ -1400,7 +1404,7 @@ std::vector<Result::Element> computePlacement(const ExecutionPolicy &policy,
                                             glm::any(glm::greaterThanEqual(glm::vec2(candidate.position), upper_bound)))
                                             return;
 
-                                        for (uint i; i < layer_data.densitymaps.size(); i++)
+                                        for (uint i = 0; i < layer_data.densitymaps.size(); i++)
                                         {
                                             const auto &d_map = layer_data.densitymaps[i];
 

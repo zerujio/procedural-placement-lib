@@ -7,13 +7,6 @@
 
 #include <stdexcept>
 
-#define PIPELINE_LOG 0
-
-#if PIPELINE_LOG
-#include <iostream>
-#include <chrono>
-#endif
-
 namespace placement {
 
 using Candidate = Result::Element;
@@ -40,7 +33,7 @@ ResultBuffer PlacementPipeline::s_makeResultBuffer(uint candidate_count, uint cl
     buffer.allocateImmutable(size, SFlags::map_read | SFlags::map_persistent | SFlags::map_coherent, nullptr);
 
     using AFlags = GL::Buffer::AccessFlags;
-    result_buffer.mapped_ptr = buffer.mapRange(0, size, AFlags::read | AFlags::coherent | AFlags::persistent);
+    result_buffer.mapped_ptr = static_cast<const std::byte*>(buffer.mapRange(0, size, AFlags::read | AFlags::coherent | AFlags::persistent));
 
     if (!result_buffer.mapped_ptr)
         throw std::runtime_error("GL memory mapping error!");
@@ -49,6 +42,60 @@ ResultBuffer PlacementPipeline::s_makeResultBuffer(uint candidate_count, uint cl
 
     return result_buffer;
 }
+
+uint PlacementPipeline::m_getBindingIndex(uint buffer_index) const
+{
+    return m_base_binding_index + buffer_index;
+}
+
+namespace {
+
+struct TransientBuffer
+{
+public:
+    explicit TransientBuffer(uint candidate_count)
+    {
+        constexpr GLsizeiptr candidate_size = sizeof(float) * 4;
+        m_candidate_range = allocate(candidate_count * candidate_size);
+
+        constexpr GLsizeiptr density_size = sizeof(float);
+        m_density_range = allocate(candidate_count * density_size);
+
+        constexpr GLsizeiptr world_uv_size = sizeof(float) * 2;
+        m_world_uv_range = allocate(candidate_count * world_uv_size);
+
+        constexpr GLsizeiptr index_size = sizeof(uint);
+        m_index_range = allocate(candidate_count * index_size);
+
+        m_buffer.allocateImmutable(m_size, GL::Buffer::StorageFlags::none);
+    }
+
+    [[nodiscard]] GL::BufferHandle getBuffer() const { return m_buffer; }
+
+    [[nodiscard]] GL::Buffer::Range getCandidateRange() const { return m_candidate_range; }
+
+    [[nodiscard]] GL::Buffer::Range getDensityRange() const { return m_density_range; }
+
+    [[nodiscard]] GL::Buffer::Range getWorldUVRange() const { return m_world_uv_range; }
+
+    [[nodiscard]] GL::Buffer::Range getIndexRange() const { return m_index_range; }
+
+private:
+    GL::Buffer m_buffer;
+    GL::Buffer::Range m_candidate_range;
+    GL::Buffer::Range m_density_range;
+    GL::Buffer::Range m_world_uv_range;
+    GL::Buffer::Range m_index_range;
+    GLsizeiptr m_size {0};
+
+    GL::Buffer::Range allocate(GLsizeiptr alloc_size)
+    {
+        const auto offset = m_size;
+        m_size += alloc_size;
+        return { offset, alloc_size };
+    }
+};
+
 
 enum BufferIndex
 {
@@ -60,8 +107,7 @@ enum BufferIndex
     element_buffer_index
 };
 
-auto PlacementPipeline::s_makeBindingArray(const PlacementPipeline::TransientBuffer &transient_buffer,
-                                           const ResultBuffer &result_buffer)
+auto makeBindingArray(const TransientBuffer &transient_buffer, const ResultBuffer &result_buffer)
 {
     std::array<std::pair<GL::BufferHandle, GL::Buffer::Range>, 6> array;
 
@@ -75,62 +121,18 @@ auto PlacementPipeline::s_makeBindingArray(const PlacementPipeline::TransientBuf
     return array;
 }
 
-uint PlacementPipeline::m_getBindingIndex(uint buffer_index) const
+void bindBuffers(uint base_index, const TransientBuffer& transient_buffer, const ResultBuffer& result_buffer)
 {
-    return m_base_binding_index + buffer_index;
+    const auto bindings = makeBindingArray(transient_buffer, result_buffer);
+
+    GL::Buffer::bindRanges(GL::Buffer::IndexedTarget::shader_storage, base_index, bindings.begin(), bindings.end());
 }
 
-//DEBUG
-template<typename T>
-std::vector<T> dumpBufferRange(GL::BufferHandle buffer, GL::Buffer::Range range,
-                               GLenum barrier_bits = GL_BUFFER_UPDATE_BARRIER_BIT)
-{
-    gl.MemoryBarrier(barrier_bits);
-
-    const GLsizeiptr size = range.size / sizeof(T);
-
-    std::vector<T> vector;
-    vector.reserve(size);
-
-    auto ptr = static_cast<const T *>(buffer.mapRange(range, GL::Buffer::AccessFlags::read));
-    vector.insert(vector.end(), ptr, ptr + size);
-    buffer.unmap();
-
-    return vector;
-}
-
-class PerfTimer final
-{
-public:
-    using Clock = std::chrono::steady_clock;
-
-    void start(const char* tag)
-    {
-#if PIPELINE_LOG
-        m_start_time = Clock::now();
-        m_tag = tag;
-#endif
-    }
-
-    void stop()
-    {
-#if PIPELINE_LOG
-        std::cout << (m_tag ? m_tag : "<no tag>") << ": " << (Clock::now() - m_start_time).count() << "ns\n";
-#endif
-    }
-
-private:
-    const char* m_tag {nullptr};
-    Clock::time_point m_start_time;
-};
+} // namespace
 
 FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, const LayerData &layer_data,
                                                  glm::vec2 lower_bound, glm::vec2 upper_bound)
 {
-    PerfTimer timer;
-
-    timer.start("setup : size calculations");
-
     constexpr glm::uvec2 wg_size{GenerationKernel::work_group_size};
     const glm::vec2 wg_bounds = m_work_group_scale * layer_data.footprint;
 
@@ -139,25 +141,12 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
 
     const uint candidate_count = num_work_groups.x * num_work_groups.y * wg_size.x * wg_size.y;
 
-    timer.stop();
+    TransientBuffer transient_buffer {candidate_count};
 
-    timer.start("setup : m_buffer.resize()");
-    m_buffer.resize(candidate_count);
-    timer.stop();
-
-    timer.start("setup : makeResultBuffer()");
     ResultBuffer result_buffer = s_makeResultBuffer(candidate_count, layer_data.densitymaps.size());
-    timer.stop();
 
-    timer.start("setup : buffer bindings");
-    const auto buffer_bindings = s_makeBindingArray(m_buffer, result_buffer);
+    bindBuffers(m_base_binding_index, transient_buffer, result_buffer);
 
-    GL::Buffer::bindRanges(GL::Buffer::IndexedTarget::shader_storage, m_base_binding_index,
-                           buffer_bindings.begin(), buffer_bindings.end());
-    timer.stop();
-
-
-    timer.start("generation");
     // generation
     gl.BindTextureUnit(m_base_tex_unit, world_data.heightmap);
     m_generation_kernel(num_work_groups, work_group_offset, layer_data.footprint, world_data.scale, m_base_tex_unit,
@@ -165,9 +154,6 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
                         m_getBindingIndex(density_buffer_index));
     gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-    timer.stop();
-
-    timer.start("evaluation");
     // evaluation
     const uint class_count = layer_data.densitymaps.size();
     for (std::size_t i = 0; i < class_count; i++)
@@ -180,32 +166,21 @@ FutureResult PlacementPipeline::computePlacement(const WorldData &world_data, co
                             m_getBindingIndex(density_buffer_index));
         gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     }
-    timer.stop();
 
-    timer.start("indexation");
     // indexation
     m_indexation_kernel(IndexationKernel::calculateNumWorkGroups(candidate_count),
                         m_getBindingIndex(candidate_buffer_index), m_getBindingIndex(count_buffer_index),
                         m_getBindingIndex(index_buffer_index));
     gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-    timer.stop();
 
-    timer.start("copy");
     // copy
     m_copy_kernel(CopyKernel::calculateNumWorkGroups(candidate_count), m_getBindingIndex(candidate_buffer_index),
                   m_getBindingIndex(count_buffer_index), m_getBindingIndex(index_buffer_index),
                   m_getBindingIndex(element_buffer_index));
-    gl.MemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
-    timer.stop();
 
     // fence
     auto fence = GL::createFenceSync();
-
-    /*
-    timer.start("flush");
     gl.Flush();
-    timer.stop();
-    */
 
     return {std::move(result_buffer), std::move(fence)};
 }
@@ -236,59 +211,6 @@ void PlacementPipeline::setRandomSeed(uint seed)
             cell = generator.generate();
 
     m_generation_kernel.setWorkGroupPatternColumns(positions);
-}
-
-// PlacementPipeline::TransientBuffer
-constexpr GLsizeiptr candidate_size = 4 * sizeof(GLfloat);
-constexpr GLsizeiptr density_size = sizeof(GLfloat);
-constexpr GLsizeiptr world_uv_size = 2 * sizeof(GLfloat);
-constexpr GLsizeiptr index_size = sizeof(unsigned int);
-
-GLsizeiptr PlacementPipeline::TransientBuffer::s_calculateSize(GLsizeiptr capacity)
-{
-    return (candidate_size + density_size + world_uv_size + index_size) * capacity;
-}
-
-class PlacementPipeline::TransientBuffer::Allocator
-{
-public:
-    GL::BufferHandle::Range allocate(GLsizeiptr size)
-    {
-        const GL::BufferHandle::Range r{offset, size};
-        offset += size;
-        return r;
-    }
-
-private:
-    GLintptr offset = 0;
-};
-
-void PlacementPipeline::TransientBuffer::resize(GLsizeiptr candidate_count)
-{
-    reserve(candidate_count);
-
-    Allocator a;
-
-    m_candidate_range = a.allocate(candidate_size * candidate_count);
-    m_density_range = a.allocate(density_size * candidate_count);
-    m_world_uv_range = a.allocate(world_uv_size * candidate_count);
-    m_index_range = a.allocate(index_size * candidate_count);
-}
-
-void PlacementPipeline::TransientBuffer::reserve(GLsizeiptr candidate_count)
-{
-    const GLsizeiptr required_size = s_calculateSize(candidate_count);
-
-    if (required_size <= m_capacity)
-        return;
-
-    GLsizeiptr new_buffer_size = std::max(m_capacity, s_calculateSize(s_min_capacity));
-
-    while (new_buffer_size < required_size)
-        new_buffer_size <<= 1;
-
-    m_buffer.allocate(new_buffer_size, GL::BufferHandle::Usage::dynamic_read);
-    m_capacity = new_buffer_size;
 }
 
 } // placement

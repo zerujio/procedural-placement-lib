@@ -30,6 +30,14 @@ target_link_libraries(03-interactive-placement example-common)
 add_executable(04-scene 04-scene.cpp)
 target_link_libraries(04-scene example-common)
 
+add_executable(04-scene-cpu 04-scene.cpp cpu-placement.cpp)
+target_link_libraries(04-scene-cpu example-common stb_image)
+target_compile_definitions(04-scene-cpu PRIVATE CPU_PLACEMENT)
+
+add_executable(04-scene-cpu-parallel 04-scene.cpp cpu-placement.cpp)
+target_link_libraries(04-scene-cpu-parallel example-common stb_image tbb)
+target_compile_definitions(04-scene-cpu-parallel PRIVATE CPU_PLACEMENT CPU_PLACEMENT_PARALLEL)
+
 add_custom_target(pplib-examples)
 add_dependencies(pplib-examples
         01-basic-placement

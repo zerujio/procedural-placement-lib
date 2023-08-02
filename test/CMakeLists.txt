@@ -10,8 +10,7 @@ target_link_libraries(Tests catch procedural-placement-lib glad glfw stb_image)
 
 option(PLACEMENT_BENCHMARK_MULTITHREAD "Use a multi-thread implementation for comparison." ON)
 if (PLACEMENT_BENCHMARK_MULTITHREAD)
-    find_package(TBB REQUIRED)
-    target_link_libraries(Tests TBB::tbb)
+    target_link_libraries(Tests tbb)
     target_compile_definitions(Tests PRIVATE PLACEMENT_BENCHMARK_MULTITHREAD)
 endif()
 

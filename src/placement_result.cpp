@@ -16,7 +16,7 @@ Result::Result(ResultBuffer &&buffer) : m_buffer(std::move(buffer))
     m_index_offset.emplace_back(0);
 
     //m_buffer.gl_object.read(0, read_size, m_index_offset.data() + 1);
-    m_index_offset.insert(m_index_offset.end(), m_buffer.getCountBufferBegin(), m_buffer.getCountBufferEnd());
+    m_index_offset.insert(m_index_offset.end(), m_buffer.getCountDataBegin(), m_buffer.getCountDataEnd());
 
     uint sum = 0;
     for (uint &index: m_index_offset)
@@ -67,6 +67,14 @@ bool FutureResult::wait(std::chrono::nanoseconds timeout) const
 {
     const auto status = m_sync.clientWait(false, timeout);
     return status == GL::Sync::Status::already_signaled || status == GL::Sync::Status::condition_satisfied;
+}
+
+Result FutureResult::readResult()
+{
+    while (!wait(std::chrono::nanoseconds::max()))
+        /* wait */;
+
+    return Result(moveResultBuffer());
 }
 
 } // placement
